@@ -1096,8 +1096,13 @@ export function ScannerPage() {
         </div>
       )}
 
-      {/* Progress + Results + Config (tabbed once a scan is active) */}
-      {scan && scan.status !== "cancelled" && (
+      {/* Progress + Results + Config (tabbed once a scan is active).
+          A cancelled scan that produced partial results still renders so those
+          results stay reachable (pre-redesign these showed via a separate
+          results block); only a cancelled+empty scan is hidden — and that case
+          is already cleared to activeScanId=null by the cleanup effect above,
+          so this guard and that effect agree. */}
+      {scan && !(scan.status === "cancelled" && scan.results.length === 0) && (
         <Tabs value={resultsTab} onValueChange={(v) => setResultsTab(v as typeof resultsTab)}>
           {/* Status header + Cancel sit ABOVE the tabs so they stay reachable from
               every result tab (Cancel must not be trapped inside an inactive panel). */}

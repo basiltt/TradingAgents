@@ -23,8 +23,11 @@ export const SCANNER_RESULT_LABELS: Record<ScannerResultTab, string> = {
 
 export const SCHEDULED_LABELS: Record<ScheduledTab, string> = {
   schedule: "Schedule",
-  scan: "Scan",            // same as SCANNER_CONFIG_LABELS.scan
-  analysis: "Analysis",    // same as SCANNER_CONFIG_LABELS.analysis
-  models: "Models & Connection",
+  // scan/analysis/models are DERIVED from SCANNER_CONFIG_LABELS, not re-typed, so the
+  // two forms can never drift (the redesign's cross-form consistency goal): rename a
+  // shared label in one place and both forms follow. tsc also guarantees the keys exist.
+  scan: SCANNER_CONFIG_LABELS.scan,
+  analysis: SCANNER_CONFIG_LABELS.analysis,
+  models: SCANNER_CONFIG_LABELS.models,
   autotrade: "Auto-trade",
 };

@@ -1125,13 +1125,16 @@ function ScheduleFormDialog({
           <Tabs value={dialogTab} onValueChange={(v) => setDialogTab(v as typeof dialogTab)}>
             <TabsList className="max-w-full overflow-x-auto">
               {SCHEDULED_TABS.map((id) => (
-                <TabsTrigger key={id} value={id} className="gap-1.5">
+                <TabsTrigger key={id} value={id}>
                   {SCHEDULED_LABELS[id]}
                   {id === "autotrade" && !cooloffGateValid(autoTradeConfigs) ? (
-                    <span
-                      aria-label="needs attention"
-                      className="inline-flex size-1.5 rounded-full bg-[var(--neu-danger)]"
-                    />
+                    <>
+                      <span
+                        aria-hidden="true"
+                        className="inline-flex size-1.5 rounded-full bg-[var(--neu-danger)]"
+                      />
+                      <span className="sr-only"> — needs attention</span>
+                    </>
                   ) : null}
                 </TabsTrigger>
               ))}
@@ -1509,6 +1512,7 @@ function ScheduleFormDialog({
           </DialogFooter>
           {!cooloffGateValid(autoTradeConfigs) && (
             <p
+              role="alert"
               className="mt-1 text-right text-[0.72rem] font-medium text-[var(--neu-danger)]"
               data-testid="cooloff-save-hint"
             >

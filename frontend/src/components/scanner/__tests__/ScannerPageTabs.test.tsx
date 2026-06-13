@@ -37,7 +37,19 @@ function activePanel(): HTMLElement {
   return screen.getByRole("tabpanel");
 }
 
-function makeStatus(id: string, status: string): ScanStatus {
+function makeResult(ticker: string): import("@/api/client").ScanResultItem {
+  return {
+    ticker,
+    run_id: null,
+    status: "completed",
+    direction: "buy",
+    confidence: "high",
+    score: 8,
+    decision_summary: `${ticker} looks strong`,
+  };
+}
+
+function makeStatus(id: string, status: string, results: import("@/api/client").ScanResultItem[] = []): ScanStatus {
   return {
     scan_id: id,
     status,
@@ -47,7 +59,7 @@ function makeStatus(id: string, status: string): ScanStatus {
     current_batch: 1,
     total_batches: 1,
     current_tickers: [],
-    results: [],
+    results,
     started_at: "2026-06-13T00:00:00Z",
     completed_at: status === "completed" ? "2026-06-13T00:01:00Z" : null,
   };
@@ -138,7 +150,13 @@ describe("ScannerPage results tabs + auto-switch", () => {
     const complete = (id: string) => {
       scans[id] = makeStatus(id, "completed");
     };
-    return { complete };
+    const setStatus = (id: string, status: string) => {
+      scans[id] = makeStatus(id, status);
+    };
+    const setStatusWithResults = (id: string, status: string, results: import("@/api/client").ScanResultItem[]) => {
+      scans[id] = makeStatus(id, status, results);
+    };
+    return { complete, setStatus, setStatusWithResults };
   }
 
   it("shows Results/Progress/Config tabs once a scan is active, Progress first", async () => {
@@ -181,8 +199,8 @@ describe("ScannerPage results tabs + auto-switch", () => {
     expect(within(activePanel()).getByText(/No results for this scan/i)).toBeInTheDocument();
   });
 
-  it("does not fight the user: stays put if they pick a tab after the one auto-switch", async () => {
-    const { complete } = stubScanApi();
+  it("does not fight the user: the one-shot guard blocks a SECOND rising edge on the same scan", async () => {
+    const { complete, setStatus } = stubScanApi();
     const { qc } = renderPage();
     fireEvent.click(screen.getByRole("button", { name: /Start full market scan/i }));
     await screen.findByRole("tab", { name: "Progress" });
@@ -193,14 +211,90 @@ describe("ScannerPage results tabs + auto-switch", () => {
       expect(screen.getByRole("tab", { name: "Results" })).toHaveAttribute("data-active"),
     );
 
-    // User goes back to Config; a further refetch of the same completed scan must NOT
-    // yank them back to Results (the one-shot guard).
+    // User goes back to Config.
     fireEvent.click(screen.getByRole("tab", { name: "Config" }));
+    expect(screen.getByRole("tab", { name: "Config" })).toHaveAttribute("data-active");
+
+    // Drive a genuine SECOND running→completed rising edge on the SAME scan id (so the
+    // edge condition itself is true again). Only the didAutoSwitch one-shot guard keeps
+    // the user on Config — without it, this would yank them back to Results.
+    setStatus("scan-1", "running");
     await qc.invalidateQueries({ queryKey: ["scan", "scan-1"] });
+    // Let the running status settle so prevScanStatus records "running" again.
     await waitFor(() =>
-      expect(screen.getByRole("tab", { name: "Config" })).toHaveAttribute("data-active"),
+      expect(screen.getByRole("button", { name: /^Cancel$/i })).toBeInTheDocument(),
     );
+    complete("scan-1");
+    await qc.invalidateQueries({ queryKey: ["scan", "scan-1"] });
+    // Give the effect time to (wrongly) fire; assert it did NOT.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.getByRole("tab", { name: "Config" })).toHaveAttribute("data-active");
     expect(screen.getByRole("tab", { name: "Results" })).not.toHaveAttribute("data-active");
+  });
+
+  it("does NOT auto-switch when a scan fails (stays on Progress)", async () => {
+    const { setStatus } = stubScanApi();
+    const { qc } = renderPage();
+    fireEvent.click(screen.getByRole("button", { name: /Start full market scan/i }));
+    await screen.findByRole("tab", { name: "Progress" });
+    expect(screen.getByRole("tab", { name: "Progress" })).toHaveAttribute("data-active");
+
+    // running → failed (a failed scan keeps activeScanId, unlike cancelled+empty).
+    setStatus("scan-1", "failed");
+    await qc.invalidateQueries({ queryKey: ["scan", "scan-1"] });
+    await new Promise((r) => setTimeout(r, 0));
+    // The auto-switch matches only "completed" — Progress must stay active.
+    expect(screen.getByRole("tab", { name: "Progress" })).toHaveAttribute("data-active");
+    expect(screen.getByRole("tab", { name: "Results" })).not.toHaveAttribute("data-active");
+  });
+
+  it("activePanel() resolves to exactly one panel (inactive keepMounted panels are hidden)", async () => {
+    stubScanApi();
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: /Start full market scan/i }));
+    await screen.findByRole("tab", { name: "Progress" });
+    // The helper the other tests rely on only works if base-ui hides inactive panels:
+    // getByRole (which skips hidden nodes) must match exactly one tabpanel.
+    expect(screen.getAllByRole("tabpanel")).toHaveLength(1);
+    expect(() => activePanel()).not.toThrow();
+  });
+
+  it("keeps a cancelled scan WITH partial results reachable (regression guard)", async () => {
+    const { setStatusWithResults } = stubScanApi();
+    const { qc } = renderPage();
+    fireEvent.click(screen.getByRole("button", { name: /Start full market scan/i }));
+    await screen.findByRole("tab", { name: "Progress" });
+
+    // A scan cancelled AFTER some symbols completed: results are non-empty, so the
+    // cleanup effect must NOT clear it and the tabbed view must still render (pre-
+    // redesign these showed via a separate results block; the bug hid them entirely).
+    setStatusWithResults("scan-1", "cancelled", [makeResult("BTCUSDT"), makeResult("ETHUSDT")]);
+    await qc.invalidateQueries({ queryKey: ["scan", "scan-1"] });
+
+    // The result tabs stay on screen (not blanked back to the config form).
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Results" })).toBeInTheDocument());
+    expect(screen.getByRole("tab", { name: "Progress" })).toBeInTheDocument();
+    // The partial results are reachable on the Results tab (the ticker renders in both
+    // the mobile-collapse and desktop layouts, so allow ≥1 match).
+    fireEvent.click(screen.getByRole("tab", { name: "Results" }));
+    expect(within(activePanel()).getAllByText("BTCUSDT").length).toBeGreaterThan(0);
+    // And the config form is NOT shown (the scan is still active).
+    expect(screen.queryByRole("button", { name: /Start full market scan/i })).toBeNull();
+  });
+
+  it("clears a cancelled scan with NO results back to the config form", async () => {
+    const { setStatus } = stubScanApi();
+    const { qc } = renderPage();
+    fireEvent.click(screen.getByRole("button", { name: /Start full market scan/i }));
+    await screen.findByRole("tab", { name: "Progress" });
+
+    setStatus("scan-1", "cancelled"); // results: [] ⇒ cleanup effect clears activeScanId
+    await qc.invalidateQueries({ queryKey: ["scan", "scan-1"] });
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Start full market scan/i })).toBeInTheDocument(),
+    );
+    expect(screen.queryByRole("tab", { name: "Results" })).toBeNull();
   });
 
   it("re-arms the auto-switch for the next scan", async () => {

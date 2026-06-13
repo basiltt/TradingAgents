@@ -52,4 +52,16 @@ describe("useTabPersistence", () => {
     expect(result.current[0]).toBe("a"); // falls back, no throw
     getItem.mockRestore();
   });
+
+  it("degrades gracefully when localStorage.setItem throws (still updates state)", () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("quota exceeded");
+    });
+    const { result } = renderHook(() => useTabPersistence(KEY, ORDER));
+    // The write throws internally but is swallowed; state must still advance and the
+    // call must not throw (private-mode / quota scenarios must never break a tab click).
+    expect(() => act(() => result.current[1]("b"))).not.toThrow();
+    expect(result.current[0]).toBe("b");
+    setItem.mockRestore();
+  });
 });

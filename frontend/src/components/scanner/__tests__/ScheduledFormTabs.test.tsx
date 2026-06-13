@@ -87,6 +87,16 @@ describe("ScheduledScansPage dialog tabs", () => {
     expect(await screen.findByRole("tab", { name: "Schedule" })).toHaveAttribute("data-active");
   });
 
+  it("open-for-new persists the forced Schedule tab (overriding a remembered tab)", async () => {
+    localStorage.setItem("tradingagents_scheduled_form_tab", "models");
+    renderPage();
+    openNewDialog();
+    await screen.findByRole("tab", { name: "Schedule" });
+    // The force uses the persisting setter (spec: "setActiveTab persists, which is
+    // fine"), so opening to CREATE intentionally resets the remembered tab to Schedule.
+    expect(localStorage.getItem("tradingagents_scheduled_form_tab")).toBe("schedule");
+  });
+
   it("persists the active dialog tab on click", async () => {
     renderPage();
     openNewDialog();
@@ -115,17 +125,18 @@ describe("ScheduledScansPage Auto-trade cool-off wayfinding", () => {
     renderPage();
     openNewDialog();
     const autotradeTab = await screen.findByRole("tab", { name: /Auto-trade/i });
-    // The danger dot carries an accessible label so the warning isn't colour-only.
-    expect(within(autotradeTab).getByLabelText(/needs attention/i)).toBeInTheDocument();
+    // sr-only text (not colour-only) makes the warning perceivable to assistive tech.
+    expect(within(autotradeTab).getByText(/needs attention/i)).toBeInTheDocument();
   });
 
-  it("points the save hint at the Auto-trade tab", async () => {
+  it("points the save hint at the Auto-trade tab and announces it (role=alert)", async () => {
     seedInvalidCooloff();
     renderPage();
     openNewDialog();
     await screen.findByRole("tab", { name: "Schedule" });
     const hint = screen.getByTestId("cooloff-save-hint");
     expect(hint).toHaveTextContent(/Auto-trade tab/i);
+    expect(hint).toHaveAttribute("role", "alert");
   });
 
   it("shows no badge when cool-off settings are valid", async () => {
@@ -133,7 +144,23 @@ describe("ScheduledScansPage Auto-trade cool-off wayfinding", () => {
     renderPage();
     openNewDialog();
     const autotradeTab = await screen.findByRole("tab", { name: /Auto-trade/i });
-    expect(within(autotradeTab).queryByLabelText(/needs attention/i)).toBeNull();
+    expect(within(autotradeTab).queryByText(/needs attention/i)).toBeNull();
+    expect(screen.queryByTestId("cooloff-save-hint")).toBeNull();
+  });
+
+  it("does NOT flag a draft config with no account (gate ignores account-less drafts)", async () => {
+    // A draft row (account_id === "") is not submittable, so even an invalid cool-off
+    // on it must NOT block Save or flag the tab — mirrors cooloffGateValid's filter.
+    localStorage.setItem(
+      "tradingagents_auto_trade_configs",
+      JSON.stringify([
+        { account_id: "", cooloff_on_success_enabled: true, cooloff_on_success_minutes: null },
+      ]),
+    );
+    renderPage();
+    openNewDialog();
+    const autotradeTab = await screen.findByRole("tab", { name: /Auto-trade/i });
+    expect(within(autotradeTab).queryByText(/needs attention/i)).toBeNull();
     expect(screen.queryByTestId("cooloff-save-hint")).toBeNull();
   });
 });
