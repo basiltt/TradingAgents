@@ -2,6 +2,7 @@ import * as React from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import type { DashboardCard } from "@/api/client";
 import type { BacktestCreateRequest } from "./types";
@@ -25,6 +26,7 @@ import { SetupTab } from "./config-form/SetupTab";
 import { StrategyTab } from "./config-form/StrategyTab";
 import { RiskExitsTab } from "./config-form/RiskExitsTab";
 import { FiltersAdvancedTab } from "./config-form/FiltersAdvancedTab";
+import { TAB_ORDER, TAB_LABELS, type TabId } from "./config-form/tabMeta";
 import type { ScheduleOption } from "./config-form/tabProps";
 
 /* --------------------------------- error helpers --------------------------------- */
@@ -141,6 +143,21 @@ export function BacktestConfigForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-time inputs only
   }, []);
 
+  // Restore the active tab from the same draft (UI-only; falls back to "setup"
+  // for a seed or a draft predating this field). A seed is an intentional config,
+  // so it always starts on Setup.
+  const initialTab = React.useMemo<TabId>(() => {
+    const draft = seed ? undefined : loadDraft();
+    const t = draft?.active_tab;
+    return t && TAB_ORDER.includes(t) ? t : "setup";
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-time only
+  }, []);
+  const [activeTab, setActiveTab] = React.useState<TabId>(initialTab);
+  // Mirror activeTab into a ref so the non-rendering watch() subscription can read
+  // the current tab without re-subscribing (avoids a stale closure).
+  const activeTabRef = React.useRef(activeTab);
+  activeTabRef.current = activeTab;
+
   const {
     control,
     handleSubmit,
@@ -169,11 +186,18 @@ export function BacktestConfigForm({
     // eslint-disable-next-line react-hooks/incompatible-library -- intentional non-rendering RHF subscription; see note above
     const sub = watch(() => {
       // The callback payload can be partial when fields are hidden/unmounted. Pull
-      // the canonical RHF snapshot so every save keeps the full form state.
-      saveDraft(getValues() as BacktestDraft);
+      // the canonical RHF snapshot so every save keeps the full form state. Spread
+      // the current tab (via ref) so a field edit never clobbers the saved tab.
+      saveDraft({ ...(getValues() as BacktestDraft), active_tab: activeTabRef.current });
     });
     return () => sub.unsubscribe();
   }, [getValues, watch]);
+
+  // Persist the active tab whenever it changes (merging into the field snapshot so
+  // switching tabs doesn't drop in-progress field values).
+  React.useEffect(() => {
+    saveDraft({ ...(getValues() as BacktestDraft), active_tab: activeTab });
+  }, [activeTab, getValues]);
 
   const applyDadDemoReference = React.useCallback(() => {
     const storedReference = loadReferenceConfig();
@@ -298,10 +322,28 @@ export function BacktestConfigForm({
         </p>
       </div>
 
-      <SetupTab control={control} fieldError={fieldError} schedules={schedules} accounts={accounts} scanMode={scanMode} replayAccountId={replayAccountId} />
-      <StrategyTab control={control} fieldError={fieldError} mrLongEnabled={mrLongEnabled} />
-      <RiskExitsTab control={control} fieldError={fieldError} durationLimitsOn={durationLimitsOn} setValue={setValue} />
-      <FiltersAdvancedTab control={control} fieldError={fieldError} />
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabId)}>
+        <TabsList>
+          {TAB_ORDER.map((id) => (
+            <TabsTrigger key={id} value={id}>
+              {TAB_LABELS[id]}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+
+        <TabsContent value="setup" keepMounted>
+          <SetupTab control={control} fieldError={fieldError} schedules={schedules} accounts={accounts} scanMode={scanMode} replayAccountId={replayAccountId} />
+        </TabsContent>
+        <TabsContent value="strategy" keepMounted>
+          <StrategyTab control={control} fieldError={fieldError} mrLongEnabled={mrLongEnabled} />
+        </TabsContent>
+        <TabsContent value="risk" keepMounted>
+          <RiskExitsTab control={control} fieldError={fieldError} durationLimitsOn={durationLimitsOn} setValue={setValue} />
+        </TabsContent>
+        <TabsContent value="filters" keepMounted>
+          <FiltersAdvancedTab control={control} fieldError={fieldError} />
+        </TabsContent>
+      </Tabs>
 
       <div className="flex flex-wrap items-center justify-end gap-3">
         <Button type="button" variant="outline" onClick={resetForm} disabled={isSubmitting}>

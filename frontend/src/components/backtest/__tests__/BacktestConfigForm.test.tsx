@@ -494,4 +494,34 @@ describe("BacktestConfigForm", () => {
       expect((screen.getByLabelText("Initial Balance ($)") as HTMLInputElement).value).toBe("25000"),
     );
   });
+
+  it("renders four lifecycle tabs and defaults to Setup", () => {
+    render(<BacktestConfigForm onSubmit={vi.fn()} />);
+    expect(screen.getByRole("tab", { name: /setup/i })).toHaveAttribute("data-active");
+    expect(screen.getByRole("tab", { name: /strategy/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /risk & exits/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /filters & advanced/i })).toBeInTheDocument();
+  });
+
+  it("switches tabs on click and persists the active tab to the draft", async () => {
+    render(<BacktestConfigForm onSubmit={vi.fn()} />);
+    fireEvent.click(screen.getByRole("tab", { name: /risk & exits/i }));
+    await waitFor(() => {
+      const raw = localStorage.getItem("tradingagents_backtest_draft");
+      expect(JSON.parse(raw ?? "{}").active_tab).toBe("risk");
+    });
+  });
+
+  it("restores the active tab from a saved draft on remount", async () => {
+    const { unmount } = render(<BacktestConfigForm onSubmit={vi.fn()} />);
+    fireEvent.click(screen.getByRole("tab", { name: /strategy/i }));
+    await waitFor(() =>
+      expect(JSON.parse(localStorage.getItem("tradingagents_backtest_draft") ?? "{}").active_tab).toBe("strategy"),
+    );
+    unmount();
+    render(<BacktestConfigForm onSubmit={vi.fn()} />);
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: /strategy/i })).toHaveAttribute("data-active"),
+    );
+  });
 });

@@ -10,14 +10,16 @@
  * draft" rather than throwing — losing a draft must never break the form.
  */
 import type { BacktestConfigFormValues } from "./configSchema";
+import type { TabId } from "./config-form/tabMeta";
 
 const STORAGE_KEY = "tradingagents_backtest_draft";
 const REFERENCE_STORAGE_KEY = "tradingagents_backtest_reference_config";
 
 /** A partial snapshot — the form may persist before every field is touched, and
  * the schema can gain fields a stale draft predates. buildDefaults() backfills
- * anything missing, so a partial is always safe to restore. */
-export type BacktestDraft = Partial<BacktestConfigFormValues>;
+ * anything missing, so a partial is always safe to restore. `active_tab` is a
+ * UI-only addition (not a schema field); a draft predating it falls back to setup. */
+export type BacktestDraft = Partial<BacktestConfigFormValues> & { active_tab?: TabId };
 export type BacktestReferenceConfig = Partial<BacktestConfigFormValues>;
 
 function loadStoredObject(key: string): BacktestDraft | undefined {
