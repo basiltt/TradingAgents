@@ -46,7 +46,12 @@ class AuditRepository:
                 record.get("principal_token_id"),
                 record.get("session_id"),
                 record.get("correlation_id"),
-                json.dumps(args_redacted) if args_redacted is not None else None,
+                # default=str mirrors audit.core._canonical so the value stored
+                # here is byte-identical to what the hash chain covered. Without
+                # it, any non-JSON-native arg (e.g. a datetime like
+                # backtest_run's date_range_start) raises TypeError and the audit
+                # row is silently dropped, leaving a gap in the hash chain.
+                json.dumps(args_redacted, default=str) if args_redacted is not None else None,
                 record.get("status", "ok"),
                 record.get("error"),
                 record.get("duration_ms"),

@@ -1,6 +1,8 @@
 """AuditRepository + AuditWriter DB integration — TASK-P0-02/08 (AC-021)."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 
 from backend.mcp.core.audit import AuditWriter, verify_chain
@@ -48,6 +50,50 @@ async def test_audit_writer_persists_continuous_chain(mcp_pool):
     # asserts persisted seq/prev_hash linkage is continuous (no fork).
     for i in range(1, len(rows)):
         assert rows[i]["prev_hash"] == rows[i - 1]["entry_hash"]
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_audit_writer_persists_datetime_args_without_dropping_row(mcp_pool):
+    """A tool arg that is a datetime (e.g. backtest_run's date_range_start) must
+    NOT crash the DB append and silently drop the audit row. Regression for
+    `audit_write_failed: Object of type datetime is not JSON serializable`.
+
+    The persisted chain must also still re-verify, proving the write-time and
+    verify-time serialization of datetime args stays byte-identical.
+    """
+    from backend.mcp.repositories.audit_repo import AuditRepository
+
+    repo = AuditRepository(mcp_pool)
+    writer = AuditWriter(repo)
+    await writer.start()
+    try:
+        await writer.enqueue(
+            {
+                "tool_name": "backtest_run",
+                "tool_group": "backtest",
+                "status": "ok",
+                "args_redacted": {
+                    "starting_capital": 1000,
+                    "date_range_start": datetime(2026, 6, 6, tzinfo=timezone.utc),
+                    "date_range_end": datetime(2026, 6, 13, tzinfo=timezone.utc),
+                },
+            }
+        )
+        await writer.drain()
+    finally:
+        await writer.shutdown()
+
+    # the row must exist (it was silently dropped before the fix)
+    async with mcp_pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT seq, tool_name, args_redacted FROM mcp_audit_log ORDER BY seq"
+        )
+    assert [r["seq"] for r in rows] == [1]
+    assert rows[0]["tool_name"] == "backtest_run"
+
+    # and the persisted hash chain still re-verifies end-to-end
+    assert await repo.verify_persisted_chain() is True
 
 
 @pytest.mark.integration
