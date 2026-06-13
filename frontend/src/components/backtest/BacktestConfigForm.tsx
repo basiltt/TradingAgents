@@ -110,6 +110,30 @@ function summarizeError(path: string, message: string): string {
 // existing importers of `ScheduleOption` from this file keep working.
 export type { ScheduleOption };
 
+/**
+ * Sanitize fields that live behind a disable toggle so a config from ANY entry path
+ * (seed, restored draft, or a stored "Reference" preset) can't carry a value that
+ * fails validation from a control that isn't in the DOM — an unfixable soft-lock.
+ * The backtest engine ignores these when their feature is disabled (cooloff_core
+ * gates on *_enabled; backtest_engine gates on adaptive_blacklist_enabled), so
+ * forcing valid/empty values when off is inert. Mutates and returns `values`.
+ */
+function normalizeDisabledGroups(values: BacktestConfigFormValues): BacktestConfigFormValues {
+  // Adaptive blacklist: deps are non-nullable with min/max — force valid defaults.
+  if (!values.adaptive_blacklist_enabled) {
+    values.adaptive_blacklist_min_trades = ADAPTIVE_BLACKLIST_DEFAULTS.min_trades;
+    values.adaptive_blacklist_max_win_rate = ADAPTIVE_BLACKLIST_DEFAULTS.max_win_rate;
+    values.adaptive_blacklist_lookback_hours = ADAPTIVE_BLACKLIST_DEFAULTS.lookback_hours;
+  }
+  // Cool-off tiers: minutes are nullable + range-checked — null any disabled tier so
+  // an out-of-range leftover can't block submit from a hidden input.
+  if (!values.cooloff_on_success_enabled) values.cooloff_on_success_minutes = null;
+  if (!values.cooloff_on_failure_enabled) values.cooloff_on_failure_minutes = null;
+  if (!values.cooloff_on_double_success_enabled) values.cooloff_on_double_success_minutes = null;
+  if (!values.cooloff_on_double_failure_enabled) values.cooloff_on_double_failure_minutes = null;
+  return values;
+}
+
 export interface BacktestConfigFormProps {
   /** Pre-fill the form (e.g. "Backtest these settings" from the scanner). */
   seed?: Partial<BacktestCreateRequest>;
@@ -141,18 +165,8 @@ export function BacktestConfigForm({
     const base = buildDefaults(seed);
     const draft = seed ? undefined : loadDraft();
     const merged = draft ? { ...base, ...draft } : base;
-    // Normalize the adaptive-blacklist deps when the feature is OFF. They are
-    // non-nullable with min/max validators but hidden behind the toggle, so a draft
-    // or seed carrying an out-of-range value (e.g. min_trades:200) would fail
-    // validation on submit from a control that isn't in the DOM — an unfixable
-    // soft-lock. The engine ignores these when disabled (backtest_engine gates on
-    // adaptive_blacklist_enabled), so forcing valid defaults here is inert.
-    if (!merged.adaptive_blacklist_enabled) {
-      merged.adaptive_blacklist_min_trades = ADAPTIVE_BLACKLIST_DEFAULTS.min_trades;
-      merged.adaptive_blacklist_max_win_rate = ADAPTIVE_BLACKLIST_DEFAULTS.max_win_rate;
-      merged.adaptive_blacklist_lookback_hours = ADAPTIVE_BLACKLIST_DEFAULTS.lookback_hours;
-    }
-    return merged;
+    // Sanitize disabled-feature fields so a stale draft/seed can't soft-lock submit.
+    return normalizeDisabledGroups(merged);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-time inputs only
   }, []);
 
@@ -225,15 +239,17 @@ export function BacktestConfigForm({
       storedReference?.date_range_start === "" || storedReference?.date_range_end === ""
         ? undefined
         : storedReference;
-    const referenceValues = usableStoredReference
-      ? { ...buildDefaults(), ...usableStoredReference }
-      : buildDadDemoReferenceDefaults(getValues() as Partial<BacktestCreateRequest>);
+    const referenceValues = normalizeDisabledGroups(
+      usableStoredReference
+        ? { ...buildDefaults(), ...usableStoredReference }
+        : buildDadDemoReferenceDefaults(getValues() as Partial<BacktestCreateRequest>),
+    );
     reset(referenceValues);
     saveDraft(referenceValues);
   }, [getValues, reset]);
 
   const applyOptimizedReference = React.useCallback(() => {
-    const referenceValues = buildOptimizedReferenceDefaults();
+    const referenceValues = normalizeDisabledGroups(buildOptimizedReferenceDefaults());
     reset(referenceValues);
     saveDraft(referenceValues);
   }, [reset]);

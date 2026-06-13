@@ -27,6 +27,8 @@ export function RiskExitsTab({ control, fieldError, durationLimitsOn, setValue }
             <label className="flex cursor-pointer items-start gap-2.5 text-[0.85rem] text-[var(--neu-text-strong)]">
               <Checkbox
                 checked={durationLimitsOn}
+                aria-expanded={durationLimitsOn}
+                aria-controls={durationLimitsOn ? "duration-limits-reveal" : undefined}
                 onCheckedChange={(checked) => {
                   const on = checked === true;
                   setValue("breakeven_timeout_hours", on ? 4 : null, { shouldDirty: true, shouldValidate: true });
@@ -40,7 +42,7 @@ export function RiskExitsTab({ control, fieldError, durationLimitsOn, setValue }
               </span>
             </label>
             {durationLimitsOn ? (
-              <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div id="duration-limits-reveal" className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <NumberField control={control} name="breakeven_timeout_hours" label="Close all at breakeven after (hours)" nullable hint="Scanner: then close once open PnL covers fees" error={fieldError("breakeven_timeout_hours")} />
                 <NumberField control={control} name="max_trade_duration_hours" label="Force close after (hours)" nullable hint="Scanner: close all even at a loss after this time" error={fieldError("max_trade_duration_hours")} />
               </div>

@@ -176,22 +176,16 @@ export function ToggleNumberField({
   const revealId = `${name}-reveal`;
   const errorId = `${name}-error`;
   const inputRef = React.useRef<HTMLInputElement>(null);
-  const justEnabled = React.useRef(false);
-  // Move focus to the revealed input the render after the toggle is switched on, so
-  // keyboard/SR users land on the field they just exposed instead of having to hunt
-  // for it. Only fires on the off→on transition the user initiated (justEnabled).
-  React.useEffect(() => {
-    if (justEnabled.current) {
-      justEnabled.current = false;
-      inputRef.current?.focus();
-    }
-  });
   return (
     <Controller
       control={control}
       name={name}
       render={({ field }) => {
-        const enabled = field.value != null && Number(field.value) > 0;
+        // Gate the reveal on null, NOT `> 0`: toggling off sets the field to null, so
+        // null === collapsed. Using `> 0` would unmount the input the instant the user
+        // types a leading "0" (e.g. while entering 0.5), destroying focus and blocking
+        // any value that starts with 0.
+        const enabled = field.value != null && field.value !== "";
         return (
           <div className="rounded-[var(--neu-radius-md)] border border-[color:var(--neu-stroke-soft)]/40 px-3 py-2.5">
             <div className="flex items-start justify-between gap-3">
@@ -202,8 +196,12 @@ export function ToggleNumberField({
                   aria-controls={enabled ? revealId : undefined}
                   onCheckedChange={(checked) => {
                     const on = checked === true;
-                    if (on) justEnabled.current = true;
                     field.onChange(on ? enabledValue : null);
+                    // Move focus to the just-revealed input so keyboard/SR users land on
+                    // the field they exposed. rAF waits for the Controller to re-render
+                    // the input into the DOM; coupling this to the click (not a deferred
+                    // effect) avoids stealing focus on an unrelated later re-render.
+                    if (on) requestAnimationFrame(() => inputRef.current?.focus());
                   }}
                   className="mt-0.5"
                 />

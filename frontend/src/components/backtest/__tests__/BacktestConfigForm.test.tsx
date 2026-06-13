@@ -575,6 +575,21 @@ describe("BacktestConfigForm", () => {
     expect(onSubmit.mock.calls[0][0].adaptive_blacklist_min_trades).toBe(5);
   });
 
+  it("sanitizes an out-of-range cool-off value from a disabled seed (no load-time soft-lock)", async () => {
+    const onSubmit = vi.fn();
+    // A disabled cool-off tier carrying an out-of-range leftover minutes (>43200)
+    // must not block submit from its hidden input.
+    render(
+      <BacktestConfigForm
+        onSubmit={onSubmit}
+        seed={{ cooloff_on_success_enabled: false, cooloff_on_success_minutes: 99999 }}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0].cooloff_on_success_minutes).toBeNull();
+  });
+
   it("shows a validation error on an enabled Close-on-profit toggle that needs a goal value", async () => {
     const onSubmit = vi.fn();
     render(<BacktestConfigForm onSubmit={onSubmit} />);

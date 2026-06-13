@@ -42,15 +42,6 @@ export function ToggleNumberPairField({
   const revealId = `${valueName}-reveal`;
   const errorId = `${valueName}-error`;
   const inputRef = React.useRef<HTMLInputElement>(null);
-  const justEnabled = React.useRef(false);
-  // Focus the revealed input the render after the user switches the tier on, so
-  // keyboard/SR users land on the field they just exposed.
-  React.useEffect(() => {
-    if (justEnabled.current) {
-      justEnabled.current = false;
-      inputRef.current?.focus();
-    }
-  });
   return (
     <div className="rounded-[var(--neu-radius-md)] border border-[color:var(--neu-stroke-soft)]/40 px-3 py-2.5">
       <Controller
@@ -73,11 +64,12 @@ export function ToggleNumberPairField({
                         const on = checked === true;
                         enabledField.onChange(on);
                         if (on) {
-                          justEnabled.current = true;
                           // Seed a default so the schema's "enabled ⇒ minutes != null" holds.
                           if (valueField.value == null || valueField.value === "") {
                             valueField.onChange(enabledValue);
                           }
+                          // Focus the just-revealed input (rAF waits for it to mount).
+                          requestAnimationFrame(() => inputRef.current?.focus());
                         } else {
                           // Clear the value on disable so a switched-off tier submits
                           // `minutes: null` (matching the pre-redesign form, where the
