@@ -26,6 +26,12 @@ import { DIRECTION_CONFIG } from "@/components/scanner/constants";
 import { AutoTradeSection } from "@/components/scanner/AutoTradeSection";
 import { cooloffGateValid, collectCooloffGateErrors } from "@/components/scanner/cooloffValidation";
 import { NeuSwitch, NeuScoreBar } from "@/design-system/neumorphism";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import {
+  SCANNER_CONFIG_TABS, SCANNER_CONFIG_LABELS,
+  SCANNER_RESULT_TABS, SCANNER_RESULT_LABELS,
+} from "@/components/scanner/form-tabs/scanTabs";
+import { useTabPersistence } from "@/components/scanner/form-tabs/useTabPersistence";
 
 const PROVIDERS_FALLBACK = ["openai", "anthropic", "google", "deepseek", "nvidia", "xai", "qwen", "glm", "openrouter", "azure", "ollama"];
 const CRYPTO_ANALYSTS = ["crypto_technical", "crypto_derivatives", "crypto_news", "crypto_fundamentals", "crypto_social"] as const;
@@ -348,8 +354,14 @@ export function ScannerPage() {
   const [taPrefilterEnabled, setTaPrefilterEnabled] = useState(scanner.taPrefilterEnabled ?? false);
   const [taPrefilterThreshold, setTaPrefilterThreshold] = useState(scanner.taPrefilterThreshold ?? 40);
   const [activeScanId, _setActiveScanId] = useState<string | null>(loadActiveScanId);
-  const [showLlm, setShowLlm] = useState(true);
-  const [showWorkflow, setShowWorkflow] = useState(false);
+  const [configTab, setConfigTab] = useTabPersistence(
+    "tradingagents_scanner_config_tab", SCANNER_CONFIG_TABS,
+  );
+  const [resultsTab, setResultsTab] = useTabPersistence(
+    "tradingagents_scanner_results_tab", SCANNER_RESULT_TABS, "progress",
+  );
+  const didAutoSwitch = useRef(false);
+  const prevScanStatus = useRef<string | undefined>(undefined);
   const [llmMaxConcurrent, setLlmMaxConcurrent] = useState<number>(0);
   const [llmMinSpacingMs, setLlmMinSpacingMs] = useState<number>(0);
   const [endpoints, setEndpoints] = useState(loadEndpoints);
@@ -487,6 +499,17 @@ export function ScannerPage() {
   const scan: ScanStatus | undefined = scanQuery.data;
   const isRunning = scan?.status === "running";
   const isDone = scan?.status === "completed" || scan?.status === "cancelled" || scan?.status === "failed";
+
+  // Results view: one-shot switch to the Results tab on the running→completed rising
+  // edge, then the user's manual tab choice wins. Re-armed when a new scan begins.
+  useEffect(() => {
+    if (prevScanStatus.current === "running" && scan?.status === "completed" && !didAutoSwitch.current) {
+      setResultsTab("results");
+      didAutoSwitch.current = true;
+    }
+    prevScanStatus.current = scan?.status;
+  }, [scan?.status, setResultsTab]);
+  useEffect(() => { didAutoSwitch.current = false; }, [activeScanId]);
 
   useEffect(() => {
     if (scan?.status === "cancelled" && scan.results.length === 0) {
@@ -627,6 +650,14 @@ export function ScannerPage() {
               </div>
             </div>
           )}
+          <Tabs value={configTab} onValueChange={(v) => setConfigTab(v as typeof configTab)}>
+            <TabsList>
+              {SCANNER_CONFIG_TABS.map((id) => (
+                <TabsTrigger key={id} value={id}>{SCANNER_CONFIG_LABELS[id]}</TabsTrigger>
+              ))}
+            </TabsList>
+
+            <TabsContent value="scan" keepMounted>
           <div className={cn(SCANNER_PANEL_CLASS, "p-5 space-y-5")}>
             <ScannerPanelHeader
               icon={(
@@ -771,31 +802,10 @@ export function ScannerPage() {
               </div>
             </div>
           </div>
+            </TabsContent>
 
+            <TabsContent value="analysis" keepMounted>
           <div className={SCANNER_PANEL_CLASS}>
-            <button
-              type="button"
-              onClick={() => setShowWorkflow(!showWorkflow)}
-              className="flex w-full items-center gap-3 px-5 py-4 text-left"
-            >
-              <span className="inline-flex size-9 items-center justify-center rounded-[calc(var(--radius)*1.05)] border border-[color:var(--neu-stroke-soft)] bg-[var(--neu-surface-base)] text-[var(--neu-text-muted)] shadow-[var(--neu-shadow-raised)]">
-                <svg className={cn("size-4 transition-transform duration-200", showWorkflow && "rotate-90")} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.25}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                </svg>
-              </span>
-              <div className="flex min-w-0 items-center gap-3">
-                <span className="inline-flex size-9 items-center justify-center rounded-[calc(var(--radius)*1.05)] border border-[color-mix(in_oklch,var(--neu-accent)_20%,var(--neu-stroke-soft))] bg-[color-mix(in_oklch,var(--neu-accent)_10%,var(--neu-surface-base))] text-[var(--neu-accent)] shadow-[var(--neu-shadow-inset)]">
-                  <svg className="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
-                  </svg>
-                </span>
-                <div>
-                  <div className="text-sm font-semibold tracking-[-0.03em] text-foreground">Workflow settings</div>
-                  <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Research depth, debate rounds, checkpointing, and runtime limits</div>
-                </div>
-              </div>
-            </button>
-            {showWorkflow ? (
               <div className="border-t border-border/55 px-5 pb-5 pt-4">
                 <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
                   <div className="space-y-4">
@@ -878,33 +888,20 @@ export function ScannerPage() {
                   </div>
                 </div>
               </div>
-            ) : null}
-          </div>
 
-          <div className={SCANNER_PANEL_CLASS}>
-            <button
-              type="button"
-              onClick={() => setShowLlm(!showLlm)}
-              className="flex w-full items-center gap-3 px-5 py-4 text-left"
-            >
-              <span className="inline-flex size-9 items-center justify-center rounded-[calc(var(--radius)*1.05)] border border-[color:var(--neu-stroke-soft)] bg-[var(--neu-surface-base)] text-[var(--neu-text-muted)] shadow-[var(--neu-shadow-raised)]">
-                <svg className={cn("size-4 transition-transform duration-200", showLlm && "rotate-90")} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.25}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                </svg>
-              </span>
-              <div className="flex min-w-0 items-center gap-3">
-                <span className="inline-flex size-9 items-center justify-center rounded-[calc(var(--radius)*1.05)] border border-[color-mix(in_oklch,var(--neu-accent)_20%,var(--neu-stroke-soft))] bg-[color-mix(in_oklch,var(--neu-accent)_10%,var(--neu-surface-base))] text-[var(--neu-accent)] shadow-[var(--neu-shadow-inset)]">
-                  <svg className="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                  </svg>
-                </span>
-                <div>
-                  <div className="text-sm font-semibold tracking-[-0.03em] text-foreground">LLM and proxy settings</div>
-                  <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">API credentials, model selection, and throttle controls</div>
+                <div className="mt-4">
+                  <AgentModelOverrides
+                    assetType="crypto"
+                    modelOptions={deepOptions}
+                    overrides={agentModelOverrides}
+                    onChange={setAgentModelOverrides}
+                  />
                 </div>
-              </div>
-            </button>
-            {showLlm ? (
+          </div>
+            </TabsContent>
+
+            <TabsContent value="models" keepMounted>
+          <div className={SCANNER_PANEL_CLASS}>
               <div className="border-t border-[var(--neu-stroke-strong)]/20 px-5 pb-5 pt-4">
                 <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
                   <div className="space-y-4">
@@ -1047,15 +1044,9 @@ export function ScannerPage() {
                   </div>
                 </div>
               </div>
-            ) : null}
           </div>
-
-          <AgentModelOverrides
-            assetType="crypto"
-            modelOptions={deepOptions}
-            overrides={agentModelOverrides}
-            onChange={setAgentModelOverrides}
-          />
+            </TabsContent>
+          </Tabs>
 
           <AutoTradeSection value={autoTradeConfigs} onChange={setAutoTradeConfigs} />
 
@@ -1098,8 +1089,16 @@ export function ScannerPage() {
         </div>
       )}
 
-      {/* Progress */}
+      {/* Progress + Results + Config (tabbed once a scan is active) */}
       {scan && scan.status !== "cancelled" && (
+        <Tabs value={resultsTab} onValueChange={(v) => setResultsTab(v as typeof resultsTab)}>
+          <TabsList>
+            {SCANNER_RESULT_TABS.map((id) => (
+              <TabsTrigger key={id} value={id}>{SCANNER_RESULT_LABELS[id]}</TabsTrigger>
+            ))}
+          </TabsList>
+
+          <TabsContent value="progress" keepMounted>
         <div className={cn(SCANNER_PANEL_CLASS, "p-5 space-y-5")}>
           <div className="space-y-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1146,11 +1145,6 @@ export function ScannerPage() {
                 </Button>
               ) : null}
             </div>
-
-            {/* Config summary */}
-            {(scan.provider || scan.workflow_mode || scan.deep_think_llm) && (
-              <ScanConfigBanner scan={scan} />
-            )}
 
             {/* Progress bar */}
             <div className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-lg)] border-none shadow-[var(--shadow-card)] px-4 py-4">
@@ -1256,10 +1250,20 @@ export function ScannerPage() {
             )}
           </div>
         </div>
-      )}
+          </TabsContent>
 
-      {/* Results */}
-      {scan && scan.results.length > 0 && (
+          <TabsContent value="config" keepMounted>
+            {(scan.provider || scan.workflow_mode || scan.deep_think_llm) ? (
+              <ScanConfigBanner scan={scan} />
+            ) : (
+              <div className={cn(SCANNER_PANEL_CLASS, "p-5 text-sm text-[var(--neu-text-muted)]")}>
+                No configuration metadata recorded for this scan.
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="results" keepMounted>
+            {scan.results.length > 0 ? (
         <>
           {/* Filter bar */}
           <ScanResultFiltersBar
@@ -1389,6 +1393,13 @@ export function ScannerPage() {
             </>
           )}
         </>
+            ) : (
+              <div className={cn(SCANNER_PANEL_CLASS, "p-5 text-sm text-[var(--neu-text-muted)]")}>
+                {isRunning ? "Scanning… results will appear here as symbols complete." : "No results for this scan."}
+              </div>
+            )}
+          </TabsContent>
+        </Tabs>
       )}
 
       {tradeTarget && (
