@@ -1,10 +1,7 @@
 import * as React from "react";
-import { useForm, Controller } from "react-hook-form";
+import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import type { DashboardCard } from "@/api/client";
 import type { BacktestCreateRequest } from "./types";
@@ -24,17 +21,11 @@ import {
   saveReferenceConfig,
   type BacktestDraft,
 } from "./backtestDraft";
-import {
-  Hint,
-  NumberField,
-  SelectField,
-  CheckField,
-  ToggleNumberField,
-  HoursListField,
-  SymbolListField,
-  Section,
-  GRID,
-} from "./config-form/fields";
+import { SetupTab } from "./config-form/SetupTab";
+import { StrategyTab } from "./config-form/StrategyTab";
+import { RiskExitsTab } from "./config-form/RiskExitsTab";
+import { FiltersAdvancedTab } from "./config-form/FiltersAdvancedTab";
+import type { ScheduleOption } from "./config-form/tabProps";
 
 /* --------------------------------- error helpers --------------------------------- */
 
@@ -112,10 +103,9 @@ function summarizeError(path: string, message: string): string {
 
 /* --------------------------------- main form --------------------------------- */
 
-export interface ScheduleOption {
-  value: string;
-  label: string;
-}
+// ScheduleOption is defined in the shared tab-props module; re-export it here so
+// existing importers of `ScheduleOption` from this file keep working.
+export type { ScheduleOption };
 
 export interface BacktestConfigFormProps {
   /** Pre-fill the form (e.g. "Backtest these settings" from the scanner). */
@@ -261,7 +251,6 @@ export function BacktestConfigForm({
     return undefined;
   };
 
-  const anyError = (...paths: string[]) => paths.some((p) => !!fieldError(p));
   const validationMessages = React.useMemo(() => {
     const messages: string[] = [];
     const visit = (node: unknown, path: string[] = []) => {
@@ -279,42 +268,6 @@ export function BacktestConfigForm({
     visit(errors);
     return Array.from(new Set(messages));
   }, [errors]);
-  const closeRulesHasError = anyError(
-    "max_drawdown_pct",
-    "breakeven_timeout_hours",
-    "max_trade_duration_hours",
-    "trailing_profit_pct",
-    "close_on_profit_pct",
-  );
-  const riskLimitsHasError = anyError("max_same_direction", "max_signal_age_minutes");
-  const targetGoalHasError = anyError("target_goal_type", "target_goal_value");
-  const advancedHasError = anyError(
-    "max_same_sector",
-    "max_price_drift_pct",
-    "adaptive_blacklist_min_trades",
-    "adaptive_blacklist_max_win_rate",
-    "adaptive_blacklist_lookback_hours",
-    "cooloff_on_success_minutes",
-    "cooloff_on_failure_minutes",
-    "cooloff_on_double_success_minutes",
-    "cooloff_on_double_failure_minutes",
-  );
-  const regimeHasError = anyError(
-    "session_blocked_hours_utc",
-    "session_allowed_hours_utc",
-    "btc_vol_min_threshold",
-    "btc_vol_max_threshold",
-    "btc_vol_lookback_candles",
-    "mr_short_enabled",
-    "mr_leverage",
-    "mr_capital_pct",
-    "mr_max_trades",
-    "mr_mean_period",
-    "mr_target_capture_pct",
-    "mr_tight_stop_pct",
-    "mr_time_stop_minutes",
-    "mr_min_edge_pct",
-  );
 
   return (
     <form ref={formRef} onSubmit={submit} className={cn("flex flex-col gap-4", className)} aria-label="Backtest configuration">
@@ -345,364 +298,10 @@ export function BacktestConfigForm({
         </p>
       </div>
 
-      <Section
-        title="Backtest Setup (backtest-only)"
-        subtitle="These exist only for backtesting — in live trading the account supplies the balance and the scanner runs continuously."
-      >
-        <div className={GRID}>
-          <NumberField
-            control={control}
-            name="starting_capital"
-            label="Initial Balance ($)"
-            error={fieldError("starting_capital")}
-            hint="Backtest-only · the starting wallet, like a live account's balance"
-          />
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="date_range_start">Start</Label>
-            <Controller
-              control={control}
-              name="date_range_start"
-              render={({ field }) => (
-                <Input id="date_range_start" type="datetime-local" value={String(field.value ?? "")} onChange={field.onChange} onBlur={field.onBlur} aria-invalid={!!fieldError("date_range_start")} aria-describedby={fieldError("date_range_start") ? "date_range_start-error" : undefined} />
-              )}
-            />
-            <Hint text="Backtest-only · which historical scans to replay (from)" />
-            {fieldError("date_range_start") ? (
-              <span id="date_range_start-error" className="text-[0.72rem] text-[var(--neu-danger)]">{fieldError("date_range_start")}</span>
-            ) : null}
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="date_range_end">End</Label>
-            <Controller
-              control={control}
-              name="date_range_end"
-              render={({ field }) => (
-                <Input id="date_range_end" type="datetime-local" value={String(field.value ?? "")} onChange={field.onChange} onBlur={field.onBlur} aria-invalid={!!fieldError("date_range_end")} aria-describedby={fieldError("date_range_end") ? "date_range_end-error" : undefined} />
-              )}
-            />
-            <Hint text="Backtest-only · which historical scans to replay (to)" />
-            {fieldError("date_range_end") ? (
-              <span id="date_range_end-error" className="text-[0.72rem] text-[var(--neu-danger)]">{fieldError("date_range_end")}</span>
-            ) : null}
-          </div>
-        </div>
-      </Section>
-
-      <Section title="Signal Source (backtest-only)" subtitle="Which stored scan results feed the simulation — live trading always uses the running scanner.">
-        <div className={GRID}>
-          <SelectField
-            control={control}
-            name="scan_source.mode"
-            label="Source Mode"
-            hint="Backtest-only · where signals come from"
-            error={fieldError("scan_source.mode")}
-            options={[
-              { value: "date_range", label: "All scans in date range" },
-              { value: "schedule", label: "Specific schedule" },
-              { value: "replay", label: "Replay (validate vs live)" },
-            ]}
-          />
-          {scanMode === "schedule" ? (
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="scan_source.schedule_id">Schedule</Label>
-              <Controller
-                control={control}
-                name="scan_source.schedule_id"
-                render={({ field }) => (
-                  <select
-                    id="scan_source.schedule_id"
-                    value={String(field.value ?? "")}
-                    onChange={field.onChange}
-                    aria-invalid={!!fieldError("scan_source.schedule_id")}
-                    aria-describedby={fieldError("scan_source.schedule_id") ? "scan_source.schedule_id-error" : undefined}
-                    className="neu-input-base neu-focus-ring h-11 w-full rounded-[var(--neu-radius-md)] px-3 text-sm"
-                  >
-                    <option value="">Select…</option>
-                    {schedules.map((s) => (
-                      <option key={s.value} value={s.value}>
-                        {s.label}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              />
-              {fieldError("scan_source.schedule_id") ? (
-                <span id="scan_source.schedule_id-error" className="text-[0.72rem] text-[var(--neu-danger)]">{fieldError("scan_source.schedule_id")}</span>
-              ) : null}
-              {schedules.length === 0 ? (
-                <span className="text-[0.72rem] text-[var(--neu-text-muted)]">
-                  No schedules available — create one in Scheduled Scans, or use “All scans in date range”.
-                </span>
-              ) : null}
-            </div>
-          ) : null}
-          {scanMode === "replay" ? (
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="scan_source.replay_account_id">Replay Account</Label>
-              <Controller
-                control={control}
-                name="scan_source.replay_account_id"
-                render={({ field }) => (
-                  <select
-                    id="scan_source.replay_account_id"
-                    value={String(field.value ?? "")}
-                    onChange={field.onChange}
-                    aria-invalid={!!fieldError("scan_source.replay_account_id")}
-                    aria-describedby={fieldError("scan_source.replay_account_id") ? "scan_source.replay_account_id-error" : undefined}
-                    className="neu-input-base neu-focus-ring h-11 w-full rounded-[var(--neu-radius-md)] px-3 text-sm"
-                  >
-                    <option value="">Select…</option>
-                    {accounts.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.label} ({a.account_type})
-                      </option>
-                    ))}
-                  </select>
-                )}
-              />
-              {fieldError("scan_source.replay_account_id") ? (
-                <span id="scan_source.replay_account_id-error" className="text-[0.72rem] text-[var(--neu-danger)]">{fieldError("scan_source.replay_account_id")}</span>
-              ) : null}
-              <span className="text-[0.72rem] text-[var(--neu-text-muted)]">
-                Rebuilds this account's actual scanner trade ledger and keeps a
-                candle-engine comparison beside it. The Date Range below bounds which trades are replayed;
-                AI-Manager-closed and non-scanner trades are excluded. Replay infers
-                starting balance from the first live cycle in the range.
-              </span>
-              {(() => {
-                const acct = accounts.find((a) => a.id === replayAccountId);
-                return acct?.ai_manager_state != null ? (
-                  <span className="text-[0.72rem] text-[var(--neu-warning,#b45309)]">
-                    This account uses the AI Manager, which the backtest excludes — replay
-                    fidelity is most meaningful for non-AI-Manager accounts.
-                  </span>
-                ) : null;
-              })()}
-            </div>
-          ) : null}
-        </div>
-      </Section>
-
-      <Section
-        title="Execution Model (backtest-only)"
-        subtitle="Cost + granularity assumptions the simulator uses — live trading gets these from the exchange."
-      >
-        <div className={GRID}>
-          <SelectField control={control} name="simulation_interval" label="Simulation Interval" hint="Backtest-only · candle size the sim steps through" options={[
-            { value: "5m", label: "5 minutes" },
-            { value: "15m", label: "15 minutes" },
-            { value: "1h", label: "1 hour" },
-            { value: "4h", label: "4 hours" },
-          ]} error={fieldError("simulation_interval")} />
-          <NumberField control={control} name="fee_rate_pct" label="Fee Rate (%)" hint="Backtest-only · taker fee per side (Bybit ≈ 0.055)" error={fieldError("fee_rate_pct")} />
-          <NumberField control={control} name="slippage_bps" label="Slippage (bps)" hint="Backtest-only · adverse fill slippage, basis points" error={fieldError("slippage_bps")} />
-          <SelectField control={control} name="funding_rate_model" label="Funding Model" hint="Backtest-only · perpetual funding cost model" error={fieldError("funding_rate_model")} options={[
-            { value: "none", label: "None" },
-            { value: "fixed_8h", label: "Fixed (8h)" },
-          ]} />
-          <NumberField control={control} name="funding_rate_fixed_pct" label="Funding Rate (%/8h)" hint="Backtest-only · used when Funding Model = Fixed" error={fieldError("funding_rate_fixed_pct")} />
-        </div>
-      </Section>
-
-      <Section
-        title="Trade Decisions"
-        subtitle="Mirrors the scanner's auto-trade config — same field names, same meaning."
-      >
-        <div className={GRID}>
-          <SelectField control={control} name="direction" label="Direction" hint="Scanner: Direction" error={fieldError("direction")} options={[
-            { value: "straight", label: "Straight (follow signal)" },
-            { value: "reverse", label: "Reverse (invert signal)" },
-          ]} />
-          <NumberField control={control} name="leverage" label="Leverage" hint="Scanner: Leverage" error={fieldError("leverage")} />
-          <NumberField control={control} name="capital_pct" label="Capital %" hint="Scanner: Capital % · margin per trade" error={fieldError("capital_pct")} />
-          <NumberField control={control} name="take_profit_pct" label="Take profit %" hint="Scanner: Take profit %" error={fieldError("take_profit_pct")} />
-          <NumberField control={control} name="stop_loss_pct" label="Stop loss %" hint="Scanner: Stop loss %" error={fieldError("stop_loss_pct")} />
-          <NumberField control={control} name="min_score" label="Min score" hint="Scanner: Min score" error={fieldError("min_score")} />
-          <SelectField control={control} name="confidence_filter" label="Min confidence" hint="Scanner: Min confidence" error={fieldError("confidence_filter")} options={[
-            { value: "any", label: "Any" },
-            { value: "high", label: "High only" },
-            { value: "moderate", label: "Moderate+" },
-            { value: "low", label: "Low+" },
-          ]} />
-          <SelectField control={control} name="signal_sides" label="Signal sides" hint="Scanner: Signal sides" error={fieldError("signal_sides")} options={[
-            { value: "both", label: "Both" },
-            { value: "buy", label: "Buy only" },
-            { value: "sell", label: "Sell only" },
-          ]} />
-          <NumberField control={control} name="max_trades" label="Max trades" hint="Scanner: Max trades · per scan cycle" error={fieldError("max_trades")} />
-          <SelectField control={control} name="execution_mode" label="Execution mode" hint="Scanner: Execution mode" error={fieldError("execution_mode")} options={[
-            { value: "immediate", label: "Immediate" },
-            { value: "batch", label: "Batch" },
-          ]} />
-        </div>
-        <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2">
-          <CheckField control={control} name="fill_to_max_trades" label="Fill to max trades" hint="Scanner: Fill to max trades" />
-          <CheckField control={control} name="skip_if_positions_open" label="Skip if positions open" hint="Scanner: Skip if positions open" />
-        </div>
-      </Section>
-
-      <Section title="Close Rules">
-        <p className="mb-3 text-[0.72rem] leading-snug text-[var(--neu-text-muted)]">
-          Same close automation as the scanner. Each switch reveals its input when turned on; off means the rule is disabled.
-        </p>
-        <div className="mb-4 sm:w-1/2 lg:w-1/3">
-          <NumberField control={control} name="max_drawdown_pct" label="Max drawdown %" hint="Scanner: Max drawdown % · close all if equity falls this far" error={fieldError("max_drawdown_pct")} />
-        </div>
-        <div className="space-y-3">
-          <CheckField control={control} name="smart_drawdown_close" label="Smart drawdown (close only losers)" hint="Scanner: when drawdown triggers, keep winners running" />
-          <ToggleNumberField control={control} name="close_on_profit_pct" title="Close and re-trade on profit" description="Scanner: close all once open equity rises this %, then re-trade" enabledValue={50} unit="%" min={1} max={100} step={5} />
-          {/* Trade duration limits — ONE scanner switch driving TWO fields (4h / 8h). */}
-          <div className="rounded-[var(--neu-radius-md)] border border-[color:var(--neu-stroke-soft)]/40 px-3 py-2.5">
-            <label className="flex cursor-pointer items-start gap-2.5 text-[0.85rem] text-[var(--neu-text-strong)]">
-              <Checkbox
-                checked={durationLimitsOn}
-                onCheckedChange={(checked) => {
-                  const on = checked === true;
-                  setValue("breakeven_timeout_hours", on ? 4 : null, { shouldDirty: true, shouldValidate: true });
-                  setValue("max_trade_duration_hours", on ? 8 : null, { shouldDirty: true, shouldValidate: true });
-                }}
-                className="mt-0.5"
-              />
-              <span className="flex flex-col">
-                Trade duration limits
-                <Hint text="Scanner: auto-close trades based on how long they've been open" />
-              </span>
-            </label>
-            {durationLimitsOn ? (
-              <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <NumberField control={control} name="breakeven_timeout_hours" label="Close all at breakeven after (hours)" nullable hint="Scanner: then close once open PnL covers fees" error={fieldError("breakeven_timeout_hours")} />
-                <NumberField control={control} name="max_trade_duration_hours" label="Force close after (hours)" nullable hint="Scanner: close all even at a loss after this time" error={fieldError("max_trade_duration_hours")} />
-              </div>
-            ) : null}
-          </div>
-          <ToggleNumberField control={control} name="trailing_profit_pct" title="Trailing profit stop" description="Scanner: after gaining this %, close if profit drops 50% from peak" enabledValue={2.0} unit="%" min={0.5} max={50} step={0.5} />
-        </div>
-      </Section>
-
-      <Section title="Risk Limits">
-        <div className={GRID}>
-          <NumberField control={control} name="max_same_direction" label="Max positions same direction" nullable hint="Scanner: Max positions same direction" error={fieldError("max_same_direction")} />
-          <NumberField control={control} name="max_signal_age_minutes" label="Max signal age (min)" nullable hint="Scanner: Max signal age (minutes)" error={fieldError("max_signal_age_minutes")} />
-        </div>
-      </Section>
-
-      <Section title="Symbol Filters">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <SymbolListField control={control} name="symbol_whitelist" label="Whitelist (only these)" hint="Scanner: Symbol whitelist · trade only these" error={fieldError("symbol_whitelist")} />
-          <SymbolListField control={control} name="symbol_blacklist" label="Blacklist (never these)" hint="Scanner: Symbol blacklist · never trade these" error={fieldError("symbol_blacklist")} />
-        </div>
-      </Section>
-
-      <Section title="Target Goal">
-        <p className="mb-3 text-[0.72rem] leading-snug text-[var(--neu-text-muted)]">
-          Scanner: Target goal — stops the whole cycle once reached. Different from &ldquo;Close and re-trade on profit&rdquo; in Close Rules, which closes mid-cycle and keeps trading.
-        </p>
-        <div className={GRID}>
-          <SelectField control={control} name="target_goal_type" label="Goal Type" emptyToNull hint="Scanner: Target goal type" error={fieldError("target_goal_type")} options={[
-            { value: "", label: "None" },
-            { value: "trade_count", label: "Trade count" },
-            { value: "profit_pct", label: "Profit %" },
-          ]} />
-          <NumberField control={control} name="target_goal_value" label="Goal Value" nullable hint="Scanner: target trade count or profit %, per Goal Type" error={fieldError("target_goal_value")} />
-        </div>
-      </Section>
-
-      <Section
-        title="Advanced (engine-level)"
-        subtitle="Auto-trade engine features that are NOT shown in the scanner's config form. They still affect the backtest unless marked not-simulated."
-      >
-        <div className={GRID}>
-          <NumberField control={control} name="max_price_drift_pct" label="Max price drift %" nullable hint="Engine-level · skip a signal if price moved this % since the scan" error={fieldError("max_price_drift_pct")} />
-          <NumberField control={control} name="max_same_sector" label="Max positions same sector" nullable hint="Not simulated · sector data is live-only, no effect on results" error={fieldError("max_same_sector")} />
-        </div>
-        <div className="mb-2 mt-4">
-          <CheckField control={control} name="adaptive_blacklist_enabled" label="Enable adaptive blacklist" hint="Engine-level · auto-skip symbols whose recent win rate is poor" />
-        </div>
-        <div className={GRID}>
-          <NumberField control={control} name="adaptive_blacklist_min_trades" label="Min trades" hint="Engine-level · min trades before blacklisting" error={fieldError("adaptive_blacklist_min_trades")} />
-          <NumberField control={control} name="adaptive_blacklist_max_win_rate" label="Max win rate %" hint="Engine-level · blacklist below this win rate" error={fieldError("adaptive_blacklist_max_win_rate")} />
-          <NumberField control={control} name="adaptive_blacklist_lookback_hours" label="Lookback (hours)" hint="Engine-level · win-rate lookback window" error={fieldError("adaptive_blacklist_lookback_hours")} />
-        </div>
-        <div className="mb-2 mt-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-          Cool Off Time
-        </div>
-        <div className="mb-2">
-          <CheckField control={control} name="cooloff_on_success_enabled" label="Cool off after a win" hint="Engine-level · pause new entries after a winning cycle" />
-        </div>
-        <div className={GRID}>
-          <NumberField control={control} name="cooloff_on_success_minutes" label="Win cool off (min)" nullable hint="1–43200 minutes" error={fieldError("cooloff_on_success_minutes")} />
-          <CheckField control={control} name="cooloff_on_failure_enabled" label="Cool off after a loss" hint="Engine-level · pause after a losing cycle" />
-          <NumberField control={control} name="cooloff_on_failure_minutes" label="Loss cool off (min)" nullable hint="1–43200 minutes" error={fieldError("cooloff_on_failure_minutes")} />
-        </div>
-        <div className={GRID}>
-          <CheckField control={control} name="cooloff_on_double_success_enabled" label="Cool off after 2 wins" hint="Engine-level · 2 consecutive wins" />
-          <NumberField control={control} name="cooloff_on_double_success_minutes" label="2-win cool off (min)" nullable hint="1–43200 minutes" error={fieldError("cooloff_on_double_success_minutes")} />
-          <CheckField control={control} name="cooloff_on_double_failure_enabled" label="Cool off after 2 losses" hint="Engine-level · 2 consecutive losses" />
-          <NumberField control={control} name="cooloff_on_double_failure_minutes" label="2-loss cool off (min)" nullable hint="1–43200 minutes" error={fieldError("cooloff_on_double_failure_minutes")} />
-        </div>
-      </Section>
-
-      <Section title="Market Regime & Strategy (F1/F2/F3)">
-        <p className="mb-3 text-[0.72rem] leading-5 text-[var(--neu-text-muted)]">
-          Replay the regime features on history. All off by default. Modeling notes:
-          F2-long honors mr_long_enabled (the live server-ack is bypassed — no live
-          account); BTC vol uses historical klines at each scan time; MR entries fill at
-          the next bar&apos;s open.
-        </p>
-
-        {/* F1 — Regime / Session Filter */}
-        <div className="mb-2">
-          <CheckField control={control} name="regime_filter_enabled" label="Regime / Session Filter (F1)" />
-        </div>
-        <div className={GRID}>
-          <CheckField control={control} name="session_filter_enabled" label="Session hour filter" />
-          <HoursListField control={control} name="session_blocked_hours_utc" label="Blocked UTC hours" error={fieldError("session_blocked_hours_utc")} />
-          <HoursListField control={control} name="session_allowed_hours_utc" label="Allowed UTC hours (alt)" error={fieldError("session_allowed_hours_utc")} />
-          <CheckField control={control} name="btc_vol_filter_enabled" label="BTC volatility band" />
-          <NumberField control={control} name="btc_vol_min_threshold" label="BTC vol min (atr ratio)" nullable error={fieldError("btc_vol_min_threshold")} />
-          <NumberField control={control} name="btc_vol_max_threshold" label="BTC vol max (atr ratio)" nullable error={fieldError("btc_vol_max_threshold")} />
-          <SelectField control={control} name="btc_vol_interval" label="BTC vol interval" error={fieldError("btc_vol_interval")} options={[
-            { value: "15m", label: "15m" }, { value: "1h", label: "1h" }, { value: "4h", label: "4h" },
-          ]} />
-          <NumberField control={control} name="btc_vol_lookback_candles" label="BTC vol lookback" error={fieldError("btc_vol_lookback_candles")} />
-        </div>
-
-        {/* F3 — Strategy Cohort */}
-        <div className="mt-4">
-          <SelectField control={control} name="strategy_cohort" label="Strategy cohort (F3)" emptyToNull error={fieldError("strategy_cohort")} options={[
-            { value: "", label: "Inherit (trend)" },
-            { value: "trend", label: "Trend" },
-            { value: "mean_reversion", label: "Mean-Reversion" },
-          ]} />
-        </div>
-
-        {/* F2 — Mean-Reversion */}
-        <div className="mb-2 mt-4">
-          <CheckField control={control} name="mean_reversion_enabled" label="Mean-Reversion Strategy (F2)" />
-        </div>
-        <div className={GRID}>
-          <CheckField control={control} name="mr_short_enabled" label="MR short side" />
-          <CheckField control={control} name="mr_long_enabled" label="MR long side (neg. expectancy)" />
-          <NumberField control={control} name="mr_leverage" label="MR leverage" error={fieldError("mr_leverage")} />
-          <NumberField control={control} name="mr_capital_pct" label="MR capital / trade (%)" error={fieldError("mr_capital_pct")} />
-          <NumberField control={control} name="mr_max_trades" label="MR max trades" error={fieldError("mr_max_trades")} />
-          <NumberField control={control} name="mr_mean_period" label="MR mean period" error={fieldError("mr_mean_period")} />
-          <SelectField control={control} name="mr_mean_interval" label="MR mean interval" error={fieldError("mr_mean_interval")} options={[
-            { value: "15m", label: "15m" }, { value: "1h", label: "1h" }, { value: "4h", label: "4h" },
-          ]} />
-          <NumberField control={control} name="mr_target_capture_pct" label="MR target capture (%)" error={fieldError("mr_target_capture_pct")} />
-          <NumberField control={control} name="mr_tight_stop_pct" label="MR tight stop (%)" nullable error={fieldError("mr_tight_stop_pct")} />
-          <NumberField control={control} name="mr_time_stop_minutes" label="MR time-stop (min)" error={fieldError("mr_time_stop_minutes")} />
-          <NumberField control={control} name="mr_min_edge_pct" label="MR min edge (%)" error={fieldError("mr_min_edge_pct")} />
-        </div>
-        {mrLongEnabled ? (
-          <p className="mt-2 text-[0.72rem] leading-5 text-[var(--neu-danger)]" role="note" data-testid="mr-long-danger">
-            Research shows the MR long side is net-negative (≈55% win rate, −$0.57/trade).
-            The backtest honors it (no live ack) precisely so you can measure that — expect
-            the long-side results to confirm the negative expectancy.
-          </p>
-        ) : null}
-      </Section>
+      <SetupTab control={control} fieldError={fieldError} schedules={schedules} accounts={accounts} scanMode={scanMode} replayAccountId={replayAccountId} />
+      <StrategyTab control={control} fieldError={fieldError} mrLongEnabled={mrLongEnabled} />
+      <RiskExitsTab control={control} fieldError={fieldError} durationLimitsOn={durationLimitsOn} setValue={setValue} />
+      <FiltersAdvancedTab control={control} fieldError={fieldError} />
 
       <div className="flex flex-wrap items-center justify-end gap-3">
         <Button type="button" variant="outline" onClick={resetForm} disabled={isSubmitting}>
