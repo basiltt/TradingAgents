@@ -102,8 +102,13 @@ describe("BacktestConfigForm", () => {
     // Enable the group (seeds breakeven 4 / force-close 8, both fields revealed).
     fireEvent.click(screen.getByText("Trade duration limits"));
     const breakeven = screen.getByLabelText("Close all at breakeven after (hours)") as HTMLInputElement;
-    // Typing a leading "0" (e.g. starting "0.5") must NOT collapse the group — the
-    // reveal gates on null, not `> 0`, so the inputs stay mounted mid-edit.
+    const forceClose = screen.getByLabelText("Force close after (hours)") as HTMLInputElement;
+    // Clear force-close to empty (null) so ONLY breakeven keeps the group open, then
+    // type a leading "0" into breakeven. Under the reverted `> 0` gate this collapses
+    // (0 is not > 0, force-close is null) and the inputs unmount; under the shipped
+    // `!= null` gate the group stays open mid-edit. Clearing force-close first is what
+    // makes this discriminate the two gates (a non-zero sibling would mask the bug).
+    fireEvent.change(forceClose, { target: { value: "" } });
     fireEvent.change(breakeven, { target: { value: "0" } });
     expect(screen.getByLabelText("Close all at breakeven after (hours)")).toBeInTheDocument();
     expect(screen.getByLabelText("Force close after (hours)")).toBeInTheDocument();
