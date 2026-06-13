@@ -226,8 +226,13 @@ describe("ScannerPage results tabs + auto-switch", () => {
     );
     complete("scan-1");
     await qc.invalidateQueries({ queryKey: ["scan", "scan-1"] });
-    // Give the effect time to (wrongly) fire; assert it did NOT.
-    await new Promise((r) => setTimeout(r, 0));
+    // Anchor on a POSITIVE sync point: Cancel is gated on isRunning, so it vanishes
+    // once the 2nd completion commits. Waiting for that proves the render that WOULD
+    // have auto-switched has flushed — then the negative assertion is deterministic
+    // (not a bare setTimeout race).
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /^Cancel$/i })).toBeNull(),
+    );
     expect(screen.getByRole("tab", { name: "Config" })).toHaveAttribute("data-active");
     expect(screen.getByRole("tab", { name: "Results" })).not.toHaveAttribute("data-active");
   });
@@ -242,7 +247,11 @@ describe("ScannerPage results tabs + auto-switch", () => {
     // running → failed (a failed scan keeps activeScanId, unlike cancelled+empty).
     setStatus("scan-1", "failed");
     await qc.invalidateQueries({ queryKey: ["scan", "scan-1"] });
-    await new Promise((r) => setTimeout(r, 0));
+    // Anchor on a positive sync point (Cancel vanishes when the terminal status
+    // commits) so the negative assertion is deterministic, not a setTimeout race.
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /^Cancel$/i })).toBeNull(),
+    );
     // The auto-switch matches only "completed" — Progress must stay active.
     expect(screen.getByRole("tab", { name: "Progress" })).toHaveAttribute("data-active");
     expect(screen.getByRole("tab", { name: "Results" })).not.toHaveAttribute("data-active");

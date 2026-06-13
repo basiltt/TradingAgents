@@ -1244,7 +1244,7 @@ function ScheduleFormDialog({
             </TabsContent>
 
             <TabsContent value="scan" keepMounted>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
                 <Label className="text-xs font-semibold text-[var(--neu-text-muted)] uppercase tracking-wider">LLM Provider</Label>
                 <Select value={provider} onValueChange={(v) => v != null && setProvider(v)}>
@@ -1506,12 +1506,17 @@ function ScheduleFormDialog({
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => handleOpenChange(false)}>Cancel</Button>
-            <Button disabled={submitting || (!!editingId && editLoading) || !cooloffGateValid(autoTradeConfigs)} onClick={handleSubmit}>
+            <Button
+              disabled={submitting || (!!editingId && editLoading) || !cooloffGateValid(autoTradeConfigs)}
+              onClick={handleSubmit}
+              aria-describedby={!cooloffGateValid(autoTradeConfigs) ? "cooloff-save-hint" : undefined}
+            >
               {submitting ? "Saving..." : editingId ? "Update" : "Create"}
             </Button>
           </DialogFooter>
           {!cooloffGateValid(autoTradeConfigs) && (
             <p
+              id="cooloff-save-hint"
               role="alert"
               className="mt-1 text-right text-[0.72rem] font-medium text-[var(--neu-danger)]"
               data-testid="cooloff-save-hint"

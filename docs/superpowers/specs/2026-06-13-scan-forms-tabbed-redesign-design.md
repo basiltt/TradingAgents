@@ -269,6 +269,12 @@ running/results view today. That view gets its **own, separate** tab set:
 
 - **Cancel** (while running) and **New Scan** stay in the page header/action area —
   not inside a tab.
+- **Cancelled-scan visibility:** the results view renders for a cancelled scan *only
+  if it produced partial results* (`scan && !(status === "cancelled" && results.length === 0)`).
+  A cancelled scan that completed some symbols keeps its tabs so those results stay
+  reachable (pre-redesign they showed via a separate always-visible results block); a
+  cancelled+empty scan is hidden and the cleanup effect clears `activeScanId` back to
+  the config form. The two gates key on the identical predicate, so they always agree.
 - This is a **separate** tab set from the config tabs. Config tabs show before a
   scan; results tabs show during/after. They are never on screen at the same time,
   so there is no ambiguity about which tab bar is active.
@@ -333,9 +339,14 @@ React.useEffect(() => {
 **Per-surface behavior:**
 - **Scanner config tabs** (`tradingagents_scanner_config_tab`): persist across page
   reloads.
-- **Scanner results tabs** (`tradingagents_scanner_results_tab`): persist across
-  reloads; the running→completed auto-switch to Results overrides the stored value
-  once, then user choice wins (see algorithm above).
+- **Scanner results tabs** (`tradingagents_scanner_results_tab`): the key is written
+  on interaction (and by the auto-switch), but in practice the tab is only visible
+  while a scan is active, and the new-scan reset effect snaps it back to `progress`
+  whenever `activeScanId` is (re)established — including a reload that re-attaches to
+  a live scan. So the *observable* default is always Progress while running, with the
+  running→completed auto-switch promoting Results once and the user's manual choice
+  winning until the next scan begins (see algorithm above). The persisted value is a
+  best-effort detail, not a guaranteed cross-reload "remembered Results."
 - **Scheduled dialog tabs** (`tradingagents_scheduled_form_tab`): the active tab is
   remembered while the page is open and across reloads.
 
