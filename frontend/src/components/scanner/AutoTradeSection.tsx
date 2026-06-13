@@ -60,6 +60,8 @@ const DEFAULT_CONFIG: Omit<AutoTradeConfig, "account_id"> = {
   smart_drawdown_close: false,
   trailing_profit_pct: null,
   max_same_direction: null,
+  max_same_sector: null,
+  max_price_drift_pct: null,
   ai_pause_cycles: null,
   // Cool Off Time — all default-off
   cooloff_on_success_enabled: false,
@@ -647,6 +649,20 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, usedAccountId
               />
               <p className="mt-2 text-[11px] text-[var(--neu-text-muted)]">Skip signals older than this (minutes). Blank = disabled.</p>
             </div>
+            <div>
+              <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Max price drift %</Label>
+              <Input
+                type="number"
+                min={0.1}
+                max={50}
+                step={0.1}
+                value={config.max_price_drift_pct ?? ""}
+                onChange={(e) => onChange({ max_price_drift_pct: clampNumberOrNull(e.target.value, 0.1, 50) })}
+                className="mt-2"
+                placeholder="e.g. 6"
+              />
+              <p className="mt-2 text-[11px] text-[var(--neu-text-muted)]">Skip a signal if price already moved this % since the scan. Blank = disabled.</p>
+            </div>
           </div>
 
           <p className="mt-4 text-[11px] leading-5 text-[var(--neu-text-muted)]">
@@ -863,6 +879,19 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, usedAccountId
                 value={config.max_same_direction ?? ""}
                 onChange={(e) => onChange({ max_same_direction: clampNumberOrNull(e.target.value, 1, 20) })}
                 placeholder="e.g. 3"
+                className="mt-2"
+              />
+            </div>
+            <div>
+              <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Max positions same asset category</Label>
+              <p className="mt-1 text-[11px] text-[var(--neu-text-muted)]">Limit how many positions can share one asset category (sector) simultaneously. Prevents sector concentration risk.</p>
+              <Input
+                type="number"
+                min={1}
+                max={10}
+                value={config.max_same_sector ?? ""}
+                onChange={(e) => onChange({ max_same_sector: clampNumberOrNull(e.target.value, 1, 10) })}
+                placeholder="e.g. 4"
                 className="mt-2"
               />
             </div>

@@ -25,7 +25,7 @@ export function FiltersAdvancedTab({ control, fieldError, setValue }: FiltersAdv
       >
         <div className={GRID}>
           <NumberField control={control} name="max_price_drift_pct" label="Max price drift %" nullable hint="Engine-level · skip a signal if price moved this % since the scan" error={fieldError("max_price_drift_pct")} />
-          <NumberField control={control} name="max_same_sector" label="Max positions same sector" nullable hint="Not simulated · sector data is live-only, no effect on results" error={fieldError("max_same_sector")} />
+          <NumberField control={control} name="max_same_sector" label="Max positions same asset category" nullable hint="Not simulated · asset-category (sector) data is live-only, no effect on results" error={fieldError("max_same_sector")} />
         </div>
 
         {/* Adaptive blacklist — reveal group: checkbox header + dependent fields shown only when on. */}

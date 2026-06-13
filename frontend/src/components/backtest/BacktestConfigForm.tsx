@@ -67,7 +67,7 @@ const ERROR_FIELD_LABELS: Record<string, string> = {
   close_on_profit_pct: "Close and re-trade on profit",
   target_goal_type: "Goal Type",
   target_goal_value: "Goal Value",
-  max_same_sector: "Max positions same sector",
+  max_same_sector: "Max positions same asset category",
   max_price_drift_pct: "Max price drift %",
   adaptive_blacklist_min_trades: "Adaptive blacklist min trades",
   adaptive_blacklist_max_win_rate: "Adaptive blacklist max win rate",
