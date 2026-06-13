@@ -40,4 +40,15 @@ describe("ToggleNumberPairField", () => {
     render(<Harness enabled={true} minutes={480} />);
     expect((screen.getByRole("spinbutton") as HTMLInputElement).value).toBe("480");
   });
+
+  it("re-seeds the default after a disable→re-enable cycle (keeps the form valid)", () => {
+    render(<Harness enabled={false} />);
+    // Enable (seeds 60), disable (clears to null), enable again — must re-seed 60 so
+    // the schema's enabled-requires-minutes refinement still holds.
+    fireEvent.click(screen.getByText("Cool off after a win"));
+    fireEvent.click(screen.getByText("Cool off after a win"));
+    expect(screen.queryByRole("spinbutton")).toBeNull();
+    fireEvent.click(screen.getByText("Cool off after a win"));
+    expect((screen.getByRole("spinbutton") as HTMLInputElement).value).toBe("60");
+  });
 });

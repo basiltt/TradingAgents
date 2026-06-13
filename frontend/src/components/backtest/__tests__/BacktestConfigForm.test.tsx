@@ -559,6 +559,37 @@ describe("BacktestConfigForm", () => {
     expect(req.adaptive_blacklist_min_trades).toBe(5);
   });
 
+  it("sanitizes an out-of-range adaptive-blacklist value from a disabled seed (no load-time soft-lock)", async () => {
+    const onSubmit = vi.fn();
+    // A seed/draft carrying a disabled feature with an out-of-range hidden value
+    // (min is 1) must not block submit from a control that is not in the DOM.
+    render(
+      <BacktestConfigForm
+        onSubmit={onSubmit}
+        seed={{ adaptive_blacklist_enabled: false, adaptive_blacklist_min_trades: 0 }}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    // The invalid hidden value was normalized to its default on load.
+    expect(onSubmit.mock.calls[0][0].adaptive_blacklist_min_trades).toBe(5);
+  });
+
+  it("shows a validation error on an enabled Close-on-profit toggle that needs a goal value", async () => {
+    const onSubmit = vi.fn();
+    render(<BacktestConfigForm onSubmit={onSubmit} />);
+    // Enabling close-on-profit without a target goal triggers a cross-field refine.
+    // The ToggleNumberField must surface that error inline (it previously swallowed it).
+    fireEvent.click(screen.getByText("Close and re-trade on profit"));
+    fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
+    await waitFor(() =>
+      expect(screen.getByTestId("backtest-validation-summary")).toHaveTextContent(
+        /Close on Profit requires a Goal Value/i,
+      ),
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
   it("renders four lifecycle tabs and defaults to Setup", () => {
     render(<BacktestConfigForm onSubmit={vi.fn()} />);
     expect(screen.getByRole("tab", { name: /setup/i })).toHaveAttribute("data-active");

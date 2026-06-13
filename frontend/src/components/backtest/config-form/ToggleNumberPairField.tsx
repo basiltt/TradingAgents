@@ -1,3 +1,4 @@
+import * as React from "react";
 import { Controller, type Control, type FieldPath } from "react-hook-form";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -38,6 +39,18 @@ export function ToggleNumberPairField({
   max,
   error,
 }: ToggleNumberPairFieldProps) {
+  const revealId = `${valueName}-reveal`;
+  const errorId = `${valueName}-error`;
+  const inputRef = React.useRef<HTMLInputElement>(null);
+  const justEnabled = React.useRef(false);
+  // Focus the revealed input the render after the user switches the tier on, so
+  // keyboard/SR users land on the field they just exposed.
+  React.useEffect(() => {
+    if (justEnabled.current) {
+      justEnabled.current = false;
+      inputRef.current?.focus();
+    }
+  });
   return (
     <div className="rounded-[var(--neu-radius-md)] border border-[color:var(--neu-stroke-soft)]/40 px-3 py-2.5">
       <Controller
@@ -54,10 +67,13 @@ export function ToggleNumberPairField({
                   <label className="flex cursor-pointer items-start gap-2.5 text-[0.85rem] text-[var(--neu-text-strong)]">
                     <Checkbox
                       checked={enabled}
+                      aria-expanded={enabled}
+                      aria-controls={enabled ? revealId : undefined}
                       onCheckedChange={(checked) => {
                         const on = checked === true;
                         enabledField.onChange(on);
                         if (on) {
+                          justEnabled.current = true;
                           // Seed a default so the schema's "enabled ⇒ minutes != null" holds.
                           if (valueField.value == null || valueField.value === "") {
                             valueField.onChange(enabledValue);
@@ -67,6 +83,9 @@ export function ToggleNumberPairField({
                           // `minutes: null` (matching the pre-redesign form, where the
                           // checkbox never touched the separate minutes field) instead of
                           // shipping a phantom value the user can no longer see or edit.
+                          // Safe: the backtest engine reads minutes only when the tier is
+                          // enabled (cooloff_core.decide gates on *_enabled), so a cleared
+                          // disabled tier is inert. Re-enabling re-seeds the default.
                           valueField.onChange(null);
                         }
                       }}
@@ -78,15 +97,16 @@ export function ToggleNumberPairField({
                     </span>
                   </label>
                   {enabled ? (
-                    <div className="flex shrink-0 flex-col items-end gap-1">
+                    <div id={revealId} className="flex shrink-0 flex-col items-end gap-1">
                       <div className="flex items-center gap-1.5">
                         <Input
+                          ref={inputRef}
                           type="number"
                           min={min}
                           max={max}
                           step="any"
                           aria-label={unit ? `${title} (${unit})` : title}
-                          aria-describedby={error ? `${valueName}-error` : undefined}
+                          aria-describedby={error ? errorId : undefined}
                           value={valueField.value == null ? "" : String(valueField.value)}
                           onChange={(e) => {
                             const v = e.target.value;
@@ -98,7 +118,7 @@ export function ToggleNumberPairField({
                         />
                         {unit ? <span className="text-[0.72rem] text-[var(--neu-text-muted)]">{unit}</span> : null}
                       </div>
-                      {error ? <span id={`${valueName}-error`} className="text-[0.72rem] text-[var(--neu-danger)]">{error}</span> : null}
+                      {error ? <span id={errorId} className="text-[0.72rem] text-[var(--neu-danger)]">{error}</span> : null}
                     </div>
                   ) : null}
                 </div>

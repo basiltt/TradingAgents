@@ -1,6 +1,6 @@
 import { Controller, type UseFormSetValue } from "react-hook-form";
 import { Checkbox } from "@/components/ui/checkbox";
-import type { BacktestConfigFormValues } from "../configSchema";
+import { ADAPTIVE_BLACKLIST_DEFAULTS, type BacktestConfigFormValues } from "../configSchema";
 import { NumberField, SymbolListField, Section, Hint, GRID } from "./fields";
 import { ToggleNumberPairField } from "./ToggleNumberPairField";
 import type { TabProps } from "./tabProps";
@@ -49,9 +49,9 @@ export function FiltersAdvancedTab({ control, fieldError, setValue }: FiltersAdv
                         // it prevents a soft-lock where an invalid value typed while enabled
                         // would block submit from a field that is no longer in the DOM.
                         if (!next) {
-                          setValue("adaptive_blacklist_min_trades", 5, { shouldValidate: true });
-                          setValue("adaptive_blacklist_max_win_rate", 30, { shouldValidate: true });
-                          setValue("adaptive_blacklist_lookback_hours", 48, { shouldValidate: true });
+                          setValue("adaptive_blacklist_min_trades", ADAPTIVE_BLACKLIST_DEFAULTS.min_trades, { shouldDirty: true, shouldValidate: true });
+                          setValue("adaptive_blacklist_max_win_rate", ADAPTIVE_BLACKLIST_DEFAULTS.max_win_rate, { shouldDirty: true, shouldValidate: true });
+                          setValue("adaptive_blacklist_lookback_hours", ADAPTIVE_BLACKLIST_DEFAULTS.lookback_hours, { shouldDirty: true, shouldValidate: true });
                         }
                       }}
                       className="mt-0.5"

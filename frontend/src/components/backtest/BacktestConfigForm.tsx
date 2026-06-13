@@ -12,6 +12,7 @@ import {
   buildDadDemoReferenceDefaults,
   buildOptimizedReferenceDefaults,
   toCreateRequest,
+  ADAPTIVE_BLACKLIST_DEFAULTS,
   type BacktestConfigFormValues,
 } from "./configSchema";
 import {
@@ -31,7 +32,6 @@ import { errorMessageAt, hasErrorAt, collectErrors } from "./config-form/errorTr
 import type { ScheduleOption } from "./config-form/tabProps";
 
 /* --------------------------------- error helpers --------------------------------- */
-
 
 const ERROR_FIELD_LABELS: Record<string, string> = {
   starting_capital: "Initial Balance",
@@ -140,7 +140,19 @@ export function BacktestConfigForm({
   const initialValues = React.useMemo<BacktestConfigFormValues>(() => {
     const base = buildDefaults(seed);
     const draft = seed ? undefined : loadDraft();
-    return draft ? { ...base, ...draft } : base;
+    const merged = draft ? { ...base, ...draft } : base;
+    // Normalize the adaptive-blacklist deps when the feature is OFF. They are
+    // non-nullable with min/max validators but hidden behind the toggle, so a draft
+    // or seed carrying an out-of-range value (e.g. min_trades:200) would fail
+    // validation on submit from a control that isn't in the DOM — an unfixable
+    // soft-lock. The engine ignores these when disabled (backtest_engine gates on
+    // adaptive_blacklist_enabled), so forcing valid defaults here is inert.
+    if (!merged.adaptive_blacklist_enabled) {
+      merged.adaptive_blacklist_min_trades = ADAPTIVE_BLACKLIST_DEFAULTS.min_trades;
+      merged.adaptive_blacklist_max_win_rate = ADAPTIVE_BLACKLIST_DEFAULTS.max_win_rate;
+      merged.adaptive_blacklist_lookback_hours = ADAPTIVE_BLACKLIST_DEFAULTS.lookback_hours;
+    }
+    return merged;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-time inputs only
   }, []);
 
@@ -323,7 +335,7 @@ export function BacktestConfigForm({
       </div>
 
       <Tabs value={activeTab} onValueChange={(v) => handleTabChange(v as TabId)}>
-        <TabsList className="max-w-full overflow-x-auto">
+        <TabsList className="max-w-full overflow-x-auto overflow-y-hidden">
           {TAB_ORDER.map((id) => {
             const count = tabErrorCount(id);
             return (

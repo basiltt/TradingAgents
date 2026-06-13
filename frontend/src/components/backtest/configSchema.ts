@@ -41,6 +41,16 @@ export const scanSourceSchema = z
     { message: "Select an account to replay", path: ["replay_account_id"] },
   );
 
+/** Default values for the adaptive-blacklist dependent fields. Single source shared
+ *  by the schema `.default()`s, buildDefaults(), and the form's reset/normalize logic
+ *  (FiltersAdvancedTab disable + BacktestConfigForm load-time sanitize), so the three
+ *  can't drift. Mirrors the production AutoTradeConfig defaults. */
+export const ADAPTIVE_BLACKLIST_DEFAULTS = {
+  min_trades: 5,
+  max_win_rate: 30,
+  lookback_hours: 48,
+} as const;
+
 export const backtestConfigSchema = z
   .object({
     // Backtest-specific — ranges AND defaults MUST match backend BacktestCreateRequest.
@@ -90,9 +100,9 @@ export const backtestConfigSchema = z
 
     // Adaptive blacklist — defaults mirror production AutoTradeConfig.
     adaptive_blacklist_enabled: z.boolean().default(false),
-    adaptive_blacklist_min_trades: z.coerce.number().int().min(1).max(100).default(5),
-    adaptive_blacklist_max_win_rate: z.coerce.number().min(0).max(100).default(30),
-    adaptive_blacklist_lookback_hours: z.coerce.number().int().min(1).max(720).default(48),
+    adaptive_blacklist_min_trades: z.coerce.number().int().min(1).max(100).default(ADAPTIVE_BLACKLIST_DEFAULTS.min_trades),
+    adaptive_blacklist_max_win_rate: z.coerce.number().min(0).max(100).default(ADAPTIVE_BLACKLIST_DEFAULTS.max_win_rate),
+    adaptive_blacklist_lookback_hours: z.coerce.number().int().min(1).max(720).default(ADAPTIVE_BLACKLIST_DEFAULTS.lookback_hours),
 
     // ── Cool Off Time (4 optional tiers, all default-off) ──
     // Bounds come from the shared cooloffTiers constants so the backtest gate can't
@@ -387,9 +397,9 @@ export function buildDefaults(
     target_goal_type: seed?.target_goal_type ?? null,
     target_goal_value: seed?.target_goal_value ?? null,
     adaptive_blacklist_enabled: seed?.adaptive_blacklist_enabled ?? false,
-    adaptive_blacklist_min_trades: seed?.adaptive_blacklist_min_trades ?? 5,
-    adaptive_blacklist_max_win_rate: seed?.adaptive_blacklist_max_win_rate ?? 30,
-    adaptive_blacklist_lookback_hours: seed?.adaptive_blacklist_lookback_hours ?? 48,
+    adaptive_blacklist_min_trades: seed?.adaptive_blacklist_min_trades ?? ADAPTIVE_BLACKLIST_DEFAULTS.min_trades,
+    adaptive_blacklist_max_win_rate: seed?.adaptive_blacklist_max_win_rate ?? ADAPTIVE_BLACKLIST_DEFAULTS.max_win_rate,
+    adaptive_blacklist_lookback_hours: seed?.adaptive_blacklist_lookback_hours ?? ADAPTIVE_BLACKLIST_DEFAULTS.lookback_hours,
     cooloff_on_success_enabled: seed?.cooloff_on_success_enabled ?? false,
     cooloff_on_success_minutes: seed?.cooloff_on_success_minutes ?? null,
     cooloff_on_failure_enabled: seed?.cooloff_on_failure_enabled ?? false,

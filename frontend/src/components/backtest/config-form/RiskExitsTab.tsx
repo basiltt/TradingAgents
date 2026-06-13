@@ -21,7 +21,7 @@ export function RiskExitsTab({ control, fieldError, durationLimitsOn, setValue }
         </div>
         <div className="space-y-3">
           <CheckField control={control} name="smart_drawdown_close" label="Smart drawdown (close only losers)" hint="Scanner: when drawdown triggers, keep winners running" />
-          <ToggleNumberField control={control} name="close_on_profit_pct" title="Close and re-trade on profit" description="Scanner: close all once open equity rises this %, then re-trade" enabledValue={50} unit="%" min={1} max={100} step={5} />
+          <ToggleNumberField control={control} name="close_on_profit_pct" title="Close and re-trade on profit" description="Scanner: close all once open equity rises this %, then re-trade" enabledValue={50} unit="%" min={1} max={100} step={5} error={fieldError("close_on_profit_pct")} />
           {/* Trade duration limits — ONE scanner switch driving TWO fields (4h / 8h). */}
           <div className="rounded-[var(--neu-radius-md)] border border-[color:var(--neu-stroke-soft)]/40 px-3 py-2.5">
             <label className="flex cursor-pointer items-start gap-2.5 text-[0.85rem] text-[var(--neu-text-strong)]">
@@ -46,7 +46,7 @@ export function RiskExitsTab({ control, fieldError, durationLimitsOn, setValue }
               </div>
             ) : null}
           </div>
-          <ToggleNumberField control={control} name="trailing_profit_pct" title="Trailing profit stop" description="Scanner: after gaining this %, close if profit drops 50% from peak" enabledValue={2.0} unit="%" min={0.5} max={50} step={0.5} />
+          <ToggleNumberField control={control} name="trailing_profit_pct" title="Trailing profit stop" description="Scanner: after gaining this %, close if profit drops 50% from peak" enabledValue={2.0} unit="%" min={0.5} max={50} step={0.5} error={fieldError("trailing_profit_pct")} />
         </div>
       </Section>
 

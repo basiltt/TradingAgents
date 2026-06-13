@@ -159,6 +159,7 @@ export function ToggleNumberField({
   min,
   max,
   step,
+  error,
 }: {
   control: Control<BacktestConfigFormValues>;
   name: FieldPath<BacktestConfigFormValues>;
@@ -170,7 +171,21 @@ export function ToggleNumberField({
   min?: number;
   max?: number;
   step?: number;
+  error?: string;
 }) {
+  const revealId = `${name}-reveal`;
+  const errorId = `${name}-error`;
+  const inputRef = React.useRef<HTMLInputElement>(null);
+  const justEnabled = React.useRef(false);
+  // Move focus to the revealed input the render after the toggle is switched on, so
+  // keyboard/SR users land on the field they just exposed instead of having to hunt
+  // for it. Only fires on the off→on transition the user initiated (justEnabled).
+  React.useEffect(() => {
+    if (justEnabled.current) {
+      justEnabled.current = false;
+      inputRef.current?.focus();
+    }
+  });
   return (
     <Controller
       control={control}
@@ -183,7 +198,13 @@ export function ToggleNumberField({
               <label className="flex cursor-pointer items-start gap-2.5 text-[0.85rem] text-[var(--neu-text-strong)]">
                 <Checkbox
                   checked={enabled}
-                  onCheckedChange={(checked) => field.onChange(checked === true ? enabledValue : null)}
+                  aria-expanded={enabled}
+                  aria-controls={enabled ? revealId : undefined}
+                  onCheckedChange={(checked) => {
+                    const on = checked === true;
+                    if (on) justEnabled.current = true;
+                    field.onChange(on ? enabledValue : null);
+                  }}
                   className="mt-0.5"
                 />
                 <span className="flex flex-col">
@@ -192,22 +213,32 @@ export function ToggleNumberField({
                 </span>
               </label>
               {enabled ? (
-                <div className="flex shrink-0 items-center gap-1.5">
-                  <Input
-                    type="number"
-                    min={min}
-                    max={max}
-                    step={step ?? "any"}
-                    aria-label={unit ? `${title} (${unit})` : title}
-                    value={field.value == null ? "" : String(field.value)}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      field.onChange(v === "" ? enabledValue : v);
-                    }}
-                    onBlur={field.onBlur}
-                    className="h-10 w-20 text-center"
-                  />
-                  {unit ? <span className="text-[0.72rem] text-[var(--neu-text-muted)]">{unit}</span> : null}
+                <div id={revealId} className="flex shrink-0 flex-col items-end gap-1">
+                  <div className="flex items-center gap-1.5">
+                    <Input
+                      ref={inputRef}
+                      type="number"
+                      min={min}
+                      max={max}
+                      step={step ?? "any"}
+                      aria-label={unit ? `${title} (${unit})` : title}
+                      aria-invalid={!!error}
+                      aria-describedby={error ? errorId : undefined}
+                      value={field.value == null ? "" : String(field.value)}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        field.onChange(v === "" ? enabledValue : v);
+                      }}
+                      onBlur={field.onBlur}
+                      className="h-10 w-20 text-center"
+                    />
+                    {unit ? <span className="text-[0.72rem] text-[var(--neu-text-muted)]">{unit}</span> : null}
+                  </div>
+                  {error ? (
+                    <span id={errorId} className="text-[0.72rem] text-[var(--neu-danger)]">
+                      {error}
+                    </span>
+                  ) : null}
                 </div>
               ) : null}
             </div>
