@@ -16,6 +16,12 @@ import { CooloffFields } from "./CooloffFields";
 import { CooloffBadge } from "./CooloffBadge";
 import { AICapabilityPanel } from "./AICapabilityPanel";
 import { allCapabilitiesOn } from "./aiManagerCapabilities";
+import {
+  presetToAutoTradeConfig,
+  presetChangesCard,
+  cardHasEdits,
+  type ReferencePresetId,
+} from "./applyReferencePreset";
 
 const STORAGE_KEY = "tradingagents_auto_trade_configs";
 
@@ -312,6 +318,22 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, usedAccountId
   const tpPriceMove = (config.take_profit_pct / leverageNum).toFixed(2);
   const slPriceMove = (config.stop_loss_pct / leverageNum).toFixed(2);
 
+  // Prefill this account's trade/risk/strategy fields from a backtested preset. Skips a
+  // true no-op (no mappable field changes); otherwise confirms before overwriting an
+  // edited card. account_id + AI-Manager settings are preserved by the partial onChange.
+  const applyPreset = (id: ReferencePresetId) => {
+    if (!presetChangesCard(config, id)) return;
+    if (cardHasEdits(config, DEFAULT_CONFIG)) {
+      const label = id === "optimized" ? "Optimized" : "Reference";
+      const ok = window.confirm(
+        `Replace this account's trade settings with the ${label} preset?\n\n` +
+          "Your selected account and AI-Manager settings are kept.",
+      );
+      if (!ok) return;
+    }
+    onChange(presetToAutoTradeConfig(id));
+  };
+
   return (
     <article className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-lg)] border-none shadow-[var(--shadow-card)] p-5">
       <div
@@ -371,6 +393,21 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, usedAccountId
       </div>
 
       <div className={cn("mt-5 space-y-4", !expanded && "hidden")}>
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--neu-radius-md)] bg-[var(--neu-surface-muted)] px-4 py-3 shadow-[var(--neu-shadow-inset)] border-none">
+          <div className="min-w-0">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--neu-text-strong)]">Prefill from a backtested preset</div>
+            <p className="mt-0.5 text-[11px] leading-4 text-[var(--neu-text-muted)]">Sets trade, risk &amp; strategy fields. Your account and AI-Manager settings are unchanged.</p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button type="button" variant="outline" size="xs" onClick={() => applyPreset("reference")} className="uppercase tracking-[0.14em]">
+              Apply Reference
+            </Button>
+            <Button type="button" variant="outline" size="xs" onClick={() => applyPreset("optimized")} className="uppercase tracking-[0.14em]">
+              Apply Optimized
+            </Button>
+          </div>
+        </div>
+
         <div className={SECTION_CLASS}>
           <div className="mb-3 flex items-start justify-between gap-3">
             <div>
