@@ -11,6 +11,7 @@ long-running path.
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any, Optional
 
 from pydantic import BaseModel, Field
@@ -30,6 +31,8 @@ from backend.mcp.tools.optimizer.ranker import (
     rank_results,
 )
 from backend.mcp.tools.optimizer.window import parse_window_dt
+
+logger = logging.getLogger(__name__)
 
 
 class SweepRunIn(BaseModel):
@@ -55,15 +58,21 @@ class SweepRunOut(BaseModel):
 async def _execute_sweep(
     *, sweep_id: str, repo: Any, runner: Any, args: SweepRunIn,
     signals: list[Any], snapshot: dict[str, Any], instrument_info: dict[str, Any],
-    manager: Any = None,
+    manager: Any = None, base_cfg: Optional[dict[str, Any]] = None,
 ) -> None:
     """Background sweep body: run each combo, persist per-combo, finish the job.
     Resumable — skips config hashes already stored (crash recovery). Yields to
     the live-trading breaker: when SLIs degrade (manager.mcp_permitted() False)
-    it pauses rather than competing with order placement (FR-037/NFR-002)."""
+    it pauses rather than competing with order placement (FR-037/NFR-002).
+
+    `base_cfg` is the RESOLVED base the foreground built (with starting_capital
+    seeded + window stripped) — combos overlay swept dims onto it. It falls back
+    to args.base only when not supplied (older callers / tests)."""
     try:
         combos = generate_combos(
-            args.space, strategy=args.strategy, base=args.base or {}, n=args.n, seed=args.seed
+            args.space, strategy=args.strategy,
+            base=base_cfg if base_cfg is not None else (args.base or {}),
+            n=args.n, seed=args.seed,
         )
         done = await repo.completed_config_hashes(sweep_id)
         results: list[dict[str, Any]] = []
@@ -102,8 +111,13 @@ async def _execute_sweep(
         except Exception:  # noqa: BLE001
             pass
         raise
-    except Exception:  # noqa: BLE001 — record failure, never crash the loop
-        await repo.finish_job(sweep_id, status="failed")
+    except Exception as exc:  # noqa: BLE001 — record failure, never crash the loop
+        # Log the FULL traceback (a silent 'failed' is undebuggable) and persist a
+        # short reason on the job so sweep_status surfaces it without server logs.
+        logger.exception("mcp_sweep_failed", extra={"sweep_id": sweep_id})
+        await repo.finish_job(
+            sweep_id, status="failed", error_message=f"{type(exc).__name__}: {exc}"[:500]
+        )
 
 
 async def _await_breaker_clear(manager: Any, *, max_wait_s: float = 60.0) -> None:
@@ -167,6 +181,12 @@ async def sweep_run(args: SweepRunIn, ctx: Any) -> SweepRunOut:
         except Exception as exc:  # noqa: BLE001
             raise MCPServiceUnavailableError(f"could not load backtest inputs: {exc}") from exc
 
+    # Every combo config MUST carry starting_capital — the engine reads it as a
+    # required key (config["starting_capital"]) and KeyErrors without it, which the
+    # background body would otherwise swallow into a silent 'failed'. Mirror
+    # optimize_config: seed it from the arg unless the agent's base already set it.
+    base_cfg.setdefault("starting_capital", args.starting_capital)
+
     try:
         combos = generate_combos(
             args.space, strategy=args.strategy, base=base_cfg, n=args.n, seed=args.seed
@@ -187,7 +207,7 @@ async def sweep_run(args: SweepRunIn, ctx: Any) -> SweepRunOut:
         _execute_sweep(
             sweep_id=sweep_id, repo=repo, runner=runner, args=args,
             signals=signals, snapshot=snapshot, instrument_info=instrument_info,
-            manager=manager,
+            manager=manager, base_cfg=base_cfg,
         )
     )
     if state is not None:
@@ -215,6 +235,7 @@ class SweepStatusOut(BaseModel):
     total_combos: int
     completed_combos: int
     best_result_id: Optional[str] = None
+    error_message: Optional[str] = None
 
 
 @tool(
@@ -236,6 +257,7 @@ async def sweep_status(args: SweepStatusIn, ctx: Any) -> SweepStatusOut:
         sweep_id=args.sweep_id, status=job["status"],
         total_combos=job["total_combos"], completed_combos=job["completed_combos"],
         best_result_id=job.get("best_result_id"),
+        error_message=job.get("error_message"),
     )
 
 

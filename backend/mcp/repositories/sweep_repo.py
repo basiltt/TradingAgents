@@ -135,8 +135,8 @@ class SweepRepository:
                           objective_value = EXCLUDED.objective_value,
                           result_rank = EXCLUDED.result_rank
                     """,
-                sweep_id, json.dumps(config), config_hash,
-                json.dumps(_nan_to_null(metrics)), _safe_objective(objective_value),
+                sweep_id, json.dumps(config, default=str), config_hash,
+                json.dumps(_nan_to_null(metrics), default=str), _safe_objective(objective_value),
                 result_rank,
             )
             await conn.execute(
@@ -146,13 +146,14 @@ class SweepRepository:
             )
 
     async def finish_job(
-        self, sweep_id: str, *, status: str, best_result_id: Optional[str] = None
+        self, sweep_id: str, *, status: str, best_result_id: Optional[str] = None,
+        error_message: Optional[str] = None,
     ) -> None:
         async with self._pool.acquire() as conn:
             await conn.execute(
                 "UPDATE mcp_sweep_jobs SET status=$1, best_result_id=$2, "
-                "completed_at=now() WHERE id=$3",
-                status, best_result_id, sweep_id,
+                "error_message=$3, completed_at=now() WHERE id=$4",
+                status, best_result_id, error_message, sweep_id,
             )
 
     async def cancel_job(self, sweep_id: str) -> bool:

@@ -55,13 +55,30 @@ class LiveSLIBreaker:
         self, metrics: Optional[dict[str, Any]], *, bounds: dict[str, float]
     ) -> BreakerState:
         """Derive health from a metrics sample: healthy iff every bounded metric
-        is present and within its bound. A missing sample/metric → unhealthy."""
+        that is PRESENT is within its bound, and at least one bounded metric is
+        present.
+
+        A missing OPTIONAL metric is ignored, not counted as a breach: the bounds
+        dict enumerates every SLI the breaker COULD use, but the always-on poller
+        only supplies the ones actually instrumented (e.g. loop_lag_ms). Treating
+        an absent metric as unhealthy would pin the breaker permanently OPEN and
+        shed every sweep — contradicting the documented design ("loop_lag is
+        enough; the others augment but are not required"). Fail-closed is still
+        honored for a genuinely empty sample (no signal at all → unhealthy) via
+        the `present` guard below."""
         if not metrics:
             return self.observe(healthy=None)
+        present = 0
         for key, bound in bounds.items():
             v = metrics.get(key)
-            if v is None or float(v) > float(bound):
+            if v is None:
+                continue  # optional/uninstrumented SLI — ignore, don't penalize
+            present += 1
+            if float(v) > float(bound):
                 return self.observe(healthy=False)
+        # No bounded metric present at all → no real signal → fail-closed.
+        if present == 0:
+            return self.observe(healthy=None)
         return self.observe(healthy=True)
 
     def mcp_permitted(self) -> bool:

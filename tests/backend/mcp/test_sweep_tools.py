@@ -35,6 +35,37 @@ class _LoadInputsRunner(_Runner):
         return [], {}, {}
 
 
+class _ConfigCapturingRunner(_Runner):
+    """Records every combo config run_one receives, so a test can assert the
+    background body seeded starting_capital into combos even with NO base."""
+
+    def __init__(self):
+        self.seen_configs: list[dict] = []
+
+    async def load_inputs(self, config):
+        # one signal/symbol so the sweep has something to run
+        return ([{"scan_id": "s1", "ticker": "BTCUSDT"}],
+                {"BTCUSDT": [{"open_time": 1, "close": 100.0}]},
+                {"BTCUSDT": {"qty_step": 0.001}})
+
+    async def run_one(self, config, signals, snapshot, instrument_info, *, deadline=None):
+        self.seen_configs.append(dict(config))
+        return await super().run_one(config, signals, snapshot, instrument_info,
+                                     deadline=deadline)
+
+
+class _BoomRunner(_Runner):
+    """run_one raises, so a test can assert the failure is recorded with an
+    error_message (not a silent 'failed')."""
+
+    async def load_inputs(self, config):
+        return ([{"scan_id": "s1", "ticker": "BTCUSDT"}],
+                {"BTCUSDT": [{"open_time": 1, "close": 100.0}]}, {})
+
+    async def run_one(self, config, signals, snapshot, instrument_info, *, deadline=None):
+        raise RuntimeError("combo blew up")
+
+
 
 class _State:
     """Minimal app.state stand-in carrying the real sweep_repo + a task registry."""
@@ -157,3 +188,68 @@ async def test_sweep_run_coerces_iso_string_dates_to_datetime(mcp_pool):
     task = ctx.services._state.mcp_sweep_tasks.get(sweep_id)
     if task is not None:
         await task
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_sweep_run_seeds_starting_capital_with_no_base(mcp_pool):
+    """Regression: a sweep called with NO base must still complete. Each combo
+    config has to carry starting_capital (the engine reads it as a required key);
+    without seeding, the background body KeyErrors on the first combo and the
+    sweep silently flips to 'failed' at 0 completed."""
+    from backend.mcp.repositories.sweep_repo import SweepRepository
+
+    runner = _ConfigCapturingRunner()
+    repo = SweepRepository(mcp_pool)
+    ctx = _ctx(repo, runner)
+
+    r = await _call("sweep_run", {
+        "space": {"leverage": [5, 10]}, "objective": "sharpe", "strategy": "grid",
+        # NO "base" key — this is the call shape that used to fail
+        "date_range_start": "2026-06-04T18:30:00Z", "date_range_end": "2026-06-13T03:00:00Z",
+        "starting_capital": 234.0,
+    }, ctx)
+    assert r["isError"] is False, r
+    sweep_id = r["structuredContent"]["sweep_id"]
+
+    task = ctx.services._state.mcp_sweep_tasks.get(sweep_id)
+    if task is not None:
+        await task
+
+    # sweep completed, not failed
+    job = await repo.get_job(sweep_id)
+    assert job["status"] == "completed", job
+    assert job["completed_combos"] == 2
+    # every combo the engine saw carried starting_capital (seeded from the arg)
+    assert runner.seen_configs, "no combos ran"
+    assert all(c.get("starting_capital") == 234.0 for c in runner.seen_configs)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_sweep_failure_records_error_message(mcp_pool):
+    """Regression: a combo that raises must record WHY on the job (error_message)
+    instead of a silent 'failed' with no diagnosis. sweep_status surfaces it."""
+    from backend.mcp.repositories.sweep_repo import SweepRepository
+
+    runner = _BoomRunner()
+    repo = SweepRepository(mcp_pool)
+    ctx = _ctx(repo, runner)
+
+    r = await _call("sweep_run", {
+        "space": {"leverage": [5]}, "objective": "sharpe", "strategy": "grid",
+        "date_range_start": "2026-06-04T18:30:00Z", "date_range_end": "2026-06-13T03:00:00Z",
+        "starting_capital": 234.0,
+    }, ctx)
+    assert r["isError"] is False, r
+    sweep_id = r["structuredContent"]["sweep_id"]
+
+    task = ctx.services._state.mcp_sweep_tasks.get(sweep_id)
+    if task is not None:
+        await task
+
+    # status surfaces the failure reason
+    s = await _call("sweep_status", {"sweep_id": sweep_id}, ctx)
+    sc = s["structuredContent"]
+    assert sc["status"] == "failed"
+    assert sc["error_message"] and "combo blew up" in sc["error_message"]

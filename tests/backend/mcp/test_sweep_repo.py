@@ -98,3 +98,40 @@ async def test_completed_config_hashes_for_resume(mcp_pool):
                             metrics={"sharpe": 1.0}, objective_value=1.0)
     done = await repo.completed_config_hashes(sid)
     assert "e" * 64 in done and len(done) == 1
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_write_result_serializes_datetime_in_config(mcp_pool):
+    """Regression: a sweep combo config carries the backtest window as datetimes
+    (date_range_start/end), and the engine can emit datetimes in metrics too.
+    write_result must JSON-serialize them (default=str) instead of raising
+    'Object of type datetime is not JSON serializable' — which had silently
+    flipped every real windowed sweep to 'failed' AFTER the combo ran fine."""
+    from datetime import datetime, timezone
+
+    from backend.mcp.repositories.sweep_repo import SweepRepository
+
+    repo = SweepRepository(mcp_pool)
+    sid = await repo.create_job(strategy="grid", param_space={"leverage": [7]},
+                                objective_metric="sharpe", total_combos=1)
+    cfg = {
+        "leverage": 7,
+        "date_range_start": datetime(2026, 6, 4, 18, 30, tzinfo=timezone.utc),
+        "date_range_end": datetime(2026, 6, 13, 3, 0, tzinfo=timezone.utc),
+    }
+    metrics = {"sharpe": 7.04, "net_profit_pct": 53.86, "total_trades": 26,
+               "last_trade_time": datetime(2026, 6, 12, tzinfo=timezone.utc)}
+    # Must NOT raise.
+    await repo.write_result(sweep_id=sid, config=cfg, config_hash="f" * 64,
+                            metrics=metrics, objective_value=7.04, result_rank=1)
+
+    rows = await repo.results(sid)
+    assert len(rows) == 1
+    stored = rows[0]
+    # datetimes round-tripped as ISO strings (default=str)
+    assert "2026-06-04" in str(stored["config"]["date_range_start"])
+    assert stored["metrics"]["sharpe"] == 7.04
+    assert stored["metrics"]["total_trades"] == 26
+    job = await repo.get_job(sid)
+    assert job["completed_combos"] == 1

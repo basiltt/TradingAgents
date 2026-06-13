@@ -879,6 +879,11 @@ async def _migrate_mcp_v43(conn) -> None:
         )
         """
     )
+    # error_message: capture WHY a sweep failed so sweep_status surfaces it
+    # (added after launch; older DBs get it via this idempotent ALTER).
+    await conn.execute(
+        "ALTER TABLE mcp_sweep_jobs ADD COLUMN IF NOT EXISTS error_message TEXT"
+    )
     await conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_mcp_sweep_idem "
         "ON mcp_sweep_jobs (principal_token_id, session_id, idempotency_key) "
@@ -1697,6 +1702,10 @@ CREATE TABLE IF NOT EXISTS account_cooloff_state (
     # WRITE, never a read). Callable: per-tier ADD CONSTRAINT + CREATE INDEX as discrete
     # statements (the runner splits SQL strings on ';').
     (63, _migrate_v63_cooloff_index_and_checks),
+    # Sweep failure diagnostics: record WHY a sweep failed so sweep_status can
+    # surface it (a silent 'failed' was undebuggable). Idempotent; needed for DBs
+    # already past v52 (where mcp_sweep_jobs was created) on upgrade.
+    (64, "ALTER TABLE mcp_sweep_jobs ADD COLUMN IF NOT EXISTS error_message TEXT"),
 ]
 
 

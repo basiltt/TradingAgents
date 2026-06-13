@@ -57,3 +57,42 @@ def test_breaker_evaluate_from_metrics():
     b.observe_metrics({"order_p95_ms": 50.0, "loop_lag_ms": 5.0},
                       bounds={"order_p95_ms": 200.0, "loop_lag_ms": 100.0})
     assert b.state is BreakerState.CLOSED
+
+
+def test_breaker_ignores_absent_optional_metrics():
+    """Regression: the bounds dict enumerates every SLI the breaker COULD use,
+    but the always-on poller only supplies the instrumented ones (loop_lag_ms).
+    A PRESENT-and-within-bound metric must count as healthy even when other
+    bounded metrics are absent — otherwise the breaker pins OPEN forever and
+    sheds every sweep (the original 'live-SLI breaker stayed open' failure)."""
+    b = LiveSLIBreaker(trip_threshold=1, reset_threshold=1)
+    bounds = {
+        "loop_lag_ms": 250.0,
+        "order_p95_ms": 500.0,          # never supplied by the always-on poller
+        "reconciler_cycle_ms": 2000.0,  # never supplied
+        "pool_wait_ms": 500.0,          # never supplied
+    }
+    # only loop_lag is measured, and it's healthy → breaker must be CLOSED
+    for _ in range(3):
+        b.observe_metrics({"loop_lag_ms": 5.0}, bounds=bounds)
+    assert b.state is BreakerState.CLOSED
+    assert b.mcp_permitted() is True
+
+
+def test_breaker_trips_when_present_metric_breaches_despite_absent_others():
+    """A present metric over its bound still trips, even if the other bounded
+    metrics are absent (the absent ones are ignored, the present breach is not)."""
+    b = LiveSLIBreaker(trip_threshold=1, reset_threshold=1)
+    bounds = {"loop_lag_ms": 250.0, "order_p95_ms": 500.0}
+    b.observe_metrics({"loop_lag_ms": 9999.0}, bounds=bounds)  # loop starved
+    assert b.state is BreakerState.OPEN
+    assert b.mcp_permitted() is False
+
+
+def test_breaker_fail_closed_when_no_bounded_metric_present():
+    """Fail-closed is preserved: a sample with NONE of the bounded metrics (only
+    junk keys) is treated as no-signal → unhealthy."""
+    b = LiveSLIBreaker(trip_threshold=1, reset_threshold=1)
+    bounds = {"loop_lag_ms": 250.0}
+    b.observe_metrics({"unrelated_key": 1.0}, bounds=bounds)
+    assert b.state is BreakerState.OPEN
