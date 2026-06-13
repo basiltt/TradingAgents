@@ -239,8 +239,8 @@ function seedDateToInput(value: string | undefined, fallback: Date): string {
 
 export const DAD_DEMO_REFERENCE_CONFIG = {
   starting_capital: 234,
-  date_range_start: "2026-06-05T00:00",
-  date_range_end: "2026-06-11T11:37",
+  date_range_start: "2026-06-04T18:30",
+  date_range_end: "2026-06-13T06:07",
   scan_source: {
     mode: "schedule",
     schedule_id: "d9c5f14f-a71f-4907-9449-dab3b75a52cb",
@@ -266,11 +266,11 @@ export const DAD_DEMO_REFERENCE_CONFIG = {
   max_same_sector: 4,
   symbol_blacklist: null,
   symbol_whitelist: null,
-  max_signal_age_minutes: 120,
+  max_signal_age_minutes: 150,
   max_price_drift_pct: 6,
   max_drawdown_pct: 12,
   smart_drawdown_close: true,
-  breakeven_timeout_hours: 12,
+  breakeven_timeout_hours: null,
   max_trade_duration_hours: 24,
   trailing_profit_pct: 2,
   close_on_profit_pct: null,
@@ -286,8 +286,8 @@ export const DAD_DEMO_REFERENCE_CONFIG = {
   cooloff_on_failure_minutes: null,
   cooloff_on_double_success_enabled: false,
   cooloff_on_double_success_minutes: null,
-  cooloff_on_double_failure_enabled: false,
-  cooloff_on_double_failure_minutes: null,
+  cooloff_on_double_failure_enabled: true,
+  cooloff_on_double_failure_minutes: 600,
   regime_filter_enabled: false,
   session_filter_enabled: false,
   session_blocked_hours_utc: null,
@@ -317,21 +317,20 @@ export const DAD_DEMO_REFERENCE_CONFIG = {
   regime_trend_ema_dist_pct: 1,
 } satisfies Partial<BacktestCreateRequest>;
 
+/** Optimized reference preset — the winner of the June 2026 216-combo research
+ * sweep (scripts/squeeze_research/). It diverges from the Dad-Demo baseline in
+ * exactly the knobs the sweep searched, and was validated out-of-sample:
+ * robustly +11–18% more net profit than baseline on every tested window, at a
+ * drawdown of ~15% on the original week / ~21% on later windows (a higher-return,
+ * higher-risk point on the same frontier — NOT a free drawdown reduction).
+ * Winner deltas vs baseline: leverage 8→7, max_trades 3→4, portfolio drawdown
+ * stop 12→off, profit target 15→12 (faster capital recycling). */
 export const OPTIMIZED_REFERENCE_CONFIG = {
   ...DAD_DEMO_REFERENCE_CONFIG,
-  starting_capital: 234.02,
   leverage: 7,
-  capital_pct: 30,
-  min_score: 9,
-  confidence_filter: "low",
-  max_trades: 6,
-  max_signal_age_minutes: 90,
-  max_price_drift_pct: 5,
-  max_drawdown_pct: 15,
-  breakeven_timeout_hours: null,
-  max_trade_duration_hours: 12,
-  trailing_profit_pct: 3,
-  target_goal_value: 18,
+  max_trades: 4,
+  max_drawdown_pct: 100,
+  target_goal_value: 12,
 } satisfies Partial<BacktestCreateRequest>;
 
 /** Build default form values, optionally seeded from a partial config.

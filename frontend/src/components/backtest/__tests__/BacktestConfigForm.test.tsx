@@ -160,8 +160,8 @@ describe("BacktestConfigForm", () => {
     await waitFor(() =>
       expect((screen.getByLabelText("Initial Balance ($)") as HTMLInputElement).value).toBe("234"),
     );
-    expect((screen.getByLabelText("Start") as HTMLInputElement).value).toBe("2026-06-05T00:00");
-    expect((screen.getByLabelText("End") as HTMLInputElement).value).toBe("2026-06-11T11:37");
+    expect((screen.getByLabelText("Start") as HTMLInputElement).value).toBe("2026-06-04T18:30");
+    expect((screen.getByLabelText("End") as HTMLInputElement).value).toBe("2026-06-13T06:07");
     expect((screen.getByLabelText("Source Mode") as HTMLSelectElement).value).toBe("schedule");
     expect((screen.getByLabelText("Schedule") as HTMLSelectElement).value).toBe(referenceScheduleId);
     expect((screen.getByLabelText("Leverage") as HTMLInputElement).value).toBe("8");
@@ -174,20 +174,23 @@ describe("BacktestConfigForm", () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     const req = onSubmit.mock.calls[0][0];
     expect(req.scan_source).toEqual({ mode: "schedule", schedule_id: referenceScheduleId });
-    expect(req.date_range_start).toBe(new Date("2026-06-05T00:00").toISOString());
-    expect(req.date_range_end).toBe(new Date("2026-06-11T11:37").toISOString());
+    expect(req.date_range_start).toBe(new Date("2026-06-04T18:30").toISOString());
+    expect(req.date_range_end).toBe(new Date("2026-06-13T06:07").toISOString());
     expect(req.starting_capital).toBe(234);
     expect(req.leverage).toBe(8);
     expect(req.capital_pct).toBe(22);
     expect(req.max_trades).toBe(3);
     expect(req.funding_rate_model).toBe("fixed_8h");
     expect(req.max_drawdown_pct).toBe(12);
-    expect(req.breakeven_timeout_hours).toBe(12);
+    expect(req.breakeven_timeout_hours).toBeNull();
     expect(req.max_trade_duration_hours).toBe(24);
     expect(req.target_goal_type).toBe("profit_pct");
     expect(req.target_goal_value).toBe(15);
     expect(req.max_same_sector).toBe(4);
     expect(req.max_price_drift_pct).toBe(6);
+    expect(req.max_signal_age_minutes).toBe(150);
+    expect(req.cooloff_on_double_failure_enabled).toBe(true);
+    expect(req.cooloff_on_double_failure_minutes).toBe(600);
     expect(req.symbol_blacklist).toBeNull();
     expect(req.adaptive_blacklist_enabled).toBe(false);
     expect("account_id" in req).toBe(false);
@@ -221,8 +224,8 @@ describe("BacktestConfigForm", () => {
     await waitFor(() =>
       expect((screen.getByLabelText("Initial Balance ($)") as HTMLInputElement).value).toBe("234"),
     );
-    expect((screen.getByLabelText("Start") as HTMLInputElement).value).toBe("2026-06-05T00:00");
-    expect((screen.getByLabelText("End") as HTMLInputElement).value).toBe("2026-06-11T11:37");
+    expect((screen.getByLabelText("Start") as HTMLInputElement).value).toBe("2026-06-04T18:30");
+    expect((screen.getByLabelText("End") as HTMLInputElement).value).toBe("2026-06-13T06:07");
     expect((screen.getByLabelText("Schedule") as HTMLSelectElement).value).toBe(referenceScheduleId);
     expect((screen.getByLabelText("Leverage") as HTMLInputElement).value).toBe("8");
   });
@@ -295,35 +298,35 @@ describe("BacktestConfigForm", () => {
     fireEvent.click(screen.getByRole("button", { name: /optimized reference/i }));
 
     await waitFor(() =>
-      expect((screen.getByLabelText("Initial Balance ($)") as HTMLInputElement).value).toBe("234.02"),
+      expect((screen.getByLabelText("Initial Balance ($)") as HTMLInputElement).value).toBe("234"),
     );
     expect((screen.getByLabelText("Source Mode") as HTMLSelectElement).value).toBe("schedule");
     expect((screen.getByLabelText("Schedule") as HTMLSelectElement).value).toBe(referenceScheduleId);
     expect((screen.getByLabelText("Leverage") as HTMLInputElement).value).toBe("7");
-    expect((screen.getByLabelText("Capital %") as HTMLInputElement).value).toBe("30");
-    expect((screen.getByLabelText("Min score") as HTMLInputElement).value).toBe("9");
-    expect((screen.getByLabelText("Min confidence") as HTMLSelectElement).value).toBe("low");
-    expect((screen.getByLabelText("Max trades") as HTMLInputElement).value).toBe("6");
+    expect((screen.getByLabelText("Capital %") as HTMLInputElement).value).toBe("22");
+    expect((screen.getByLabelText("Min score") as HTMLInputElement).value).toBe("7");
+    expect((screen.getByLabelText("Min confidence") as HTMLSelectElement).value).toBe("moderate");
+    expect((screen.getByLabelText("Max trades") as HTMLInputElement).value).toBe("4");
 
     fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     const req = onSubmit.mock.calls[0][0];
     expect(req.scan_source).toEqual({ mode: "schedule", schedule_id: referenceScheduleId });
-    expect(req.starting_capital).toBe(234.02);
+    expect(req.starting_capital).toBe(234);
     expect(req.leverage).toBe(7);
-    expect(req.capital_pct).toBe(30);
-    expect(req.min_score).toBe(9);
-    expect(req.confidence_filter).toBe("low");
-    expect(req.max_trades).toBe(6);
-    expect(req.max_signal_age_minutes).toBe(90);
-    expect(req.max_price_drift_pct).toBe(5);
-    expect(req.max_drawdown_pct).toBe(15);
+    expect(req.capital_pct).toBe(22);
+    expect(req.min_score).toBe(7);
+    expect(req.confidence_filter).toBe("moderate");
+    expect(req.max_trades).toBe(4);
+    expect(req.max_signal_age_minutes).toBe(150);
+    expect(req.max_price_drift_pct).toBe(6);
+    expect(req.max_drawdown_pct).toBe(100);
     expect(req.breakeven_timeout_hours).toBeNull();
-    expect(req.max_trade_duration_hours).toBe(12);
-    expect(req.trailing_profit_pct).toBe(3);
+    expect(req.max_trade_duration_hours).toBe(24);
+    expect(req.trailing_profit_pct).toBe(2);
     expect(req.target_goal_type).toBe("profit_pct");
-    expect(req.target_goal_value).toBe(18);
+    expect(req.target_goal_value).toBe(12);
     expect("account_id" in req).toBe(false);
   });
 

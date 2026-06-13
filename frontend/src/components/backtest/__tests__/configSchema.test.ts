@@ -229,18 +229,21 @@ describe("buildDefaults", () => {
     expect(defaults.confidence_filter).toBe("moderate");
     expect(defaults.funding_rate_model).toBe("fixed_8h");
     expect(defaults.max_drawdown_pct).toBe(12);
-    expect(defaults.breakeven_timeout_hours).toBe(12);
+    expect(defaults.breakeven_timeout_hours).toBeNull();
     expect(defaults.max_trade_duration_hours).toBe(24);
     expect(defaults.target_goal_type).toBe("profit_pct");
     expect(defaults.target_goal_value).toBe(15);
     expect(defaults.max_same_sector).toBe(4);
     expect(defaults.max_price_drift_pct).toBe(6);
+    expect(defaults.max_signal_age_minutes).toBe(150);
+    expect(defaults.cooloff_on_double_failure_enabled).toBe(true);
+    expect(defaults.cooloff_on_double_failure_minutes).toBe(600);
     expect(defaults.symbol_blacklist).toBeNull();
     expect(defaults.symbol_whitelist).toBeNull();
     expect(defaults.adaptive_blacklist_enabled).toBe(false);
     expect(defaults.mr_short_enabled).toBe(false);
-    expect(defaults.date_range_start).toBe("2026-06-05T00:00");
-    expect(defaults.date_range_end).toBe("2026-06-11T11:37");
+    expect(defaults.date_range_start).toBe("2026-06-04T18:30");
+    expect(defaults.date_range_end).toBe("2026-06-13T06:07");
     expect(defaults.scan_source).toEqual({
       mode: "schedule",
       schedule_id: "d9c5f14f-a71f-4907-9449-dab3b75a52cb",
@@ -252,23 +255,26 @@ describe("buildDefaults", () => {
   it("applies the optimized reference config without carrying an account id", () => {
     const defaults = buildOptimizedReferenceDefaults();
 
-    expect(defaults.starting_capital).toBe(234.02);
+    // The optimized preset is the June 2026 sweep winner: the Dad-Demo baseline
+    // with exactly four knobs changed (leverage 8→7, max_trades 3→4, portfolio
+    // drawdown stop 12→off, profit target 15→12). Everything else is inherited.
+    expect(defaults.starting_capital).toBe(234);
     expect(defaults.leverage).toBe(7);
-    expect(defaults.capital_pct).toBe(30);
-    expect(defaults.min_score).toBe(9);
-    expect(defaults.confidence_filter).toBe("low");
-    expect(defaults.max_trades).toBe(6);
+    expect(defaults.capital_pct).toBe(22);
+    expect(defaults.min_score).toBe(7);
+    expect(defaults.confidence_filter).toBe("moderate");
+    expect(defaults.max_trades).toBe(4);
     expect(defaults.execution_mode).toBe("batch");
-    expect(defaults.max_signal_age_minutes).toBe(90);
-    expect(defaults.max_price_drift_pct).toBe(5);
-    expect(defaults.max_drawdown_pct).toBe(15);
+    expect(defaults.max_signal_age_minutes).toBe(150);
+    expect(defaults.max_price_drift_pct).toBe(6);
+    expect(defaults.max_drawdown_pct).toBe(100);
     expect(defaults.breakeven_timeout_hours).toBeNull();
-    expect(defaults.max_trade_duration_hours).toBe(12);
-    expect(defaults.trailing_profit_pct).toBe(3);
+    expect(defaults.max_trade_duration_hours).toBe(24);
+    expect(defaults.trailing_profit_pct).toBe(2);
     expect(defaults.target_goal_type).toBe("profit_pct");
-    expect(defaults.target_goal_value).toBe(18);
-    expect(defaults.date_range_start).toBe("2026-06-05T00:00");
-    expect(defaults.date_range_end).toBe("2026-06-11T11:37");
+    expect(defaults.target_goal_value).toBe(12);
+    expect(defaults.date_range_start).toBe("2026-06-04T18:30");
+    expect(defaults.date_range_end).toBe("2026-06-13T06:07");
     expect(defaults.scan_source).toEqual({
       mode: "schedule",
       schedule_id: "d9c5f14f-a71f-4907-9449-dab3b75a52cb",
