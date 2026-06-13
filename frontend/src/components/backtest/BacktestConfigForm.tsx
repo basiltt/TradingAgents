@@ -26,7 +26,7 @@ import { SetupTab } from "./config-form/SetupTab";
 import { StrategyTab } from "./config-form/StrategyTab";
 import { RiskExitsTab } from "./config-form/RiskExitsTab";
 import { FiltersAdvancedTab } from "./config-form/FiltersAdvancedTab";
-import { TAB_ORDER, TAB_LABELS, type TabId } from "./config-form/tabMeta";
+import { TAB_ORDER, TAB_LABELS, FIELD_PATHS_BY_TAB, type TabId } from "./config-form/tabMeta";
 import type { ScheduleOption } from "./config-form/tabProps";
 
 /* --------------------------------- error helpers --------------------------------- */
@@ -240,24 +240,6 @@ export function BacktestConfigForm({
   const formRef = React.useRef<HTMLFormElement>(null);
   const summaryRef = React.useRef<HTMLDivElement>(null);
 
-  const submit = handleSubmit(
-    (values) => {
-      const parsed = backtestConfigSchema.parse(values);
-      onSubmit(toCreateRequest(parsed));
-    },
-    () => {
-      // On invalid submit, collapsed sections auto-open (forceOpen) on the next
-      // render; RHF's own focus fires too early against the still-unmounted field.
-      // Move focus to the first invalid control after the DOM updates.
-      requestAnimationFrame(() => {
-        const el =
-          formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]') ??
-          summaryRef.current;
-        el?.focus();
-      });
-    },
-  );
-
   const fieldError = (path: string): string | undefined => {
     // errors is a nested object; support dotted paths for scan_source.* too.
     const parts = path.split(".");
@@ -274,6 +256,86 @@ export function BacktestConfigForm({
     }
     return undefined;
   };
+
+  // True if `path` OR any nested descendant under it has a validation message.
+  // Handles both leaf fields and subtrees (e.g. scan_source → scan_source.mode).
+  const fieldHasError = React.useCallback(
+    (path: string): boolean => {
+      const parts = path.split(".");
+      let node: unknown = errors;
+      for (const p of parts) {
+        if (node && typeof node === "object" && p in node) node = (node as Record<string, unknown>)[p];
+        else return false;
+      }
+      if (!node || typeof node !== "object") return false;
+      let found = false;
+      const visit = (n: unknown) => {
+        if (found || !n || typeof n !== "object") return;
+        if (typeof (n as { message?: unknown }).message === "string") {
+          found = true;
+          return;
+        }
+        for (const [k, v] of Object.entries(n as Record<string, unknown>)) {
+          if (k === "ref" || k === "types") continue;
+          visit(v);
+        }
+      };
+      visit(node);
+      return found;
+    },
+    [errors],
+  );
+
+  // Per-tab error count, derived from the field→tab map so badges and auto-switch
+  // share one source of truth and cannot drift.
+  const tabErrorCount = React.useCallback(
+    (id: TabId): number => FIELD_PATHS_BY_TAB[id].reduce((n, p) => n + (fieldHasError(p) ? 1 : 0), 0),
+    [fieldHasError],
+  );
+
+  const submit = handleSubmit(
+    (values) => {
+      const parsed = backtestConfigSchema.parse(values);
+      onSubmit(toCreateRequest(parsed));
+    },
+    (submitErrors) => {
+      // Surface errors hidden on inactive tabs: switch to the earliest errored tab
+      // (lifecycle order), THEN focus its first invalid control after the DOM updates.
+      // Compute the target from the FRESH errors passed to this handler (the render-
+      // scope `errors` can lag a tick behind on the first failed submit).
+      const errored = (id: TabId): boolean =>
+        FIELD_PATHS_BY_TAB[id].some((path) => {
+          const parts = path.split(".");
+          let node: unknown = submitErrors;
+          for (const p of parts) {
+            if (node && typeof node === "object" && p in node) node = (node as Record<string, unknown>)[p];
+            else return false;
+          }
+          let found = false;
+          const visit = (n: unknown) => {
+            if (found || !n || typeof n !== "object") return;
+            if (typeof (n as { message?: unknown }).message === "string") {
+              found = true;
+              return;
+            }
+            for (const [k, v] of Object.entries(n as Record<string, unknown>)) {
+              if (k === "ref" || k === "types") continue;
+              visit(v);
+            }
+          };
+          visit(node);
+          return found;
+        });
+      const target = TAB_ORDER.find(errored);
+      if (target) setActiveTab(target);
+      requestAnimationFrame(() => {
+        const el =
+          formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]') ??
+          summaryRef.current;
+        el?.focus();
+      });
+    },
+  );
 
   const validationMessages = React.useMemo(() => {
     const messages: string[] = [];
@@ -324,11 +386,22 @@ export function BacktestConfigForm({
 
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabId)}>
         <TabsList>
-          {TAB_ORDER.map((id) => (
-            <TabsTrigger key={id} value={id}>
-              {TAB_LABELS[id]}
-            </TabsTrigger>
-          ))}
+          {TAB_ORDER.map((id) => {
+            const count = tabErrorCount(id);
+            return (
+              <TabsTrigger key={id} value={id} className="gap-2">
+                {TAB_LABELS[id]}
+                {count > 0 ? (
+                  <span
+                    aria-label={`${count} ${count === 1 ? "error" : "errors"}`}
+                    className="inline-flex min-w-5 items-center justify-center rounded-full bg-[var(--neu-danger)] px-1.5 text-[0.65rem] font-bold leading-none text-white"
+                  >
+                    {count}
+                  </span>
+                ) : null}
+              </TabsTrigger>
+            );
+          })}
         </TabsList>
 
         <TabsContent value="setup" keepMounted>

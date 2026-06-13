@@ -524,4 +524,20 @@ describe("BacktestConfigForm", () => {
       expect(screen.getByRole("tab", { name: /strategy/i })).toHaveAttribute("data-active"),
     );
   });
+
+  it("auto-switches to the errored tab and badges it on failed submit", async () => {
+    const onSubmit = vi.fn();
+    render(<BacktestConfigForm onSubmit={onSubmit} />);
+    // Start on Setup. Put an invalid value on the Strategy tab's Leverage (min 1, max 125).
+    // keepMounted means the Strategy field is reachable without switching first.
+    fireEvent.change(screen.getByLabelText("Leverage"), { target: { value: "9999" } });
+    fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
+    // Auto-switches to Strategy.
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: /strategy/i })).toHaveAttribute("data-active"),
+    );
+    // Strategy tab shows an error count badge.
+    expect(screen.getByRole("tab", { name: /strategy/i })).toHaveTextContent(/1/);
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
 });
