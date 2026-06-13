@@ -88,8 +88,6 @@ describe("BacktestConfigForm", () => {
   it("toggling a close-rule switch off submits null (not 0) for its field", async () => {
     const onSubmit = vi.fn();
     render(<BacktestConfigForm onSubmit={onSubmit} />);
-    // Open the collapsed Close Rules section.
-    fireEvent.click(screen.getByText("Close Rules"));
     // The "Trailing profit stop" toggle seeds 2.0 when on, then null when off.
     const toggle = screen.getByText("Trailing profit stop");
     fireEvent.click(toggle); // on -> 2.0
@@ -351,28 +349,23 @@ describe("BacktestConfigForm", () => {
     expect((screen.getByLabelText("Leverage") as HTMLInputElement).value).toBe("20");
   });
 
-  it("auto-opens a collapsed section that contains a validation error", async () => {
+  it("reveals a validation error on an out-of-range close rule after submit", async () => {
     const onSubmit = vi.fn();
     render(<BacktestConfigForm onSubmit={onSubmit} />);
-    // Close Rules starts collapsed; put an out-of-range value in it, then submit.
-    fireEvent.click(screen.getByText("Close Rules")); // open
+    // Sections are always open now; put an out-of-range value in Close Rules and submit.
     const dd = screen.getByLabelText("Max drawdown %") as HTMLInputElement;
     fireEvent.change(dd, { target: { value: "500" } }); // > max 100
-    fireEvent.click(screen.getByText("Close Rules")); // collapse again
-    expect(screen.queryByLabelText("Max drawdown %")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
-    // The section should auto-reveal so the error is visible.
+    // The field stays visible and its error surfaces in the summary.
     await waitFor(() => expect(screen.getByLabelText("Max drawdown %")).toBeInTheDocument());
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("shows a visible summary and opens target goal when close-on-profit needs a goal value", async () => {
+  it("shows a visible summary when close-on-profit needs a goal value", async () => {
     const onSubmit = vi.fn();
     render(<BacktestConfigForm onSubmit={onSubmit} />);
 
-    fireEvent.click(screen.getByText("Close Rules"));
     fireEvent.click(screen.getByText("Close and re-trade on profit"));
-    expect(screen.queryByLabelText("Goal Value")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
 
@@ -395,7 +388,6 @@ describe("BacktestConfigForm", () => {
   it("parses a comma-separated symbol blacklist into an uppercased array", async () => {
     const onSubmit = vi.fn();
     render(<BacktestConfigForm onSubmit={onSubmit} />);
-    fireEvent.click(screen.getByText("Symbol Filters")); // expand section
     const field = screen.getByLabelText("Blacklist (never these)") as HTMLInputElement;
     fireEvent.change(field, { target: { value: "btcusdt, eth usdt , solusdt" } });
     fireEvent.blur(field);
@@ -412,7 +404,6 @@ describe("BacktestConfigForm", () => {
   it("deduplicates and uppercases symbols in the blacklist", async () => {
     const onSubmit = vi.fn();
     render(<BacktestConfigForm onSubmit={onSubmit} />);
-    fireEvent.click(screen.getByText("Symbol Filters"));
     const field = screen.getByLabelText("Blacklist (never these)") as HTMLInputElement;
     // Duplicates (case-insensitive) must collapse so the 200-cap counts uniques.
     fireEvent.change(field, { target: { value: "BTC, btc, ETH, eth, BTC" } });
@@ -426,8 +417,7 @@ describe("BacktestConfigForm", () => {
     render(<BacktestConfigForm onSubmit={vi.fn()} />);
     expect(screen.getByText("Advanced (engine-level)")).toBeInTheDocument();
     expect(screen.getByText("Target Goal")).toBeInTheDocument();
-    // Expand advanced section and confirm its fields exist.
-    fireEvent.click(screen.getByText("Advanced (engine-level)"));
+    // Adaptive-blacklist fields (redesigned in a later task) confirm the section.
     expect(screen.getByLabelText("Min trades")).toBeInTheDocument();
     expect(screen.getByLabelText("Max win rate %")).toBeInTheDocument();
     expect(screen.getByLabelText("Lookback (hours)")).toBeInTheDocument();
@@ -435,7 +425,6 @@ describe("BacktestConfigForm", () => {
 
   it("exposes the regime section and shows the F2-long danger note when enabled", () => {
     render(<BacktestConfigForm onSubmit={vi.fn()} />);
-    fireEvent.click(screen.getByText("Market Regime & Strategy (F1/F2/F3)"));
     // F3 cohort select is uniquely labeled; confirms the section rendered.
     expect(screen.getByLabelText("Strategy cohort (F3)")).toBeInTheDocument();
     // The negative-expectancy note appears only after enabling the long side. The

@@ -541,7 +541,7 @@ export function BacktestConfigForm({
         </div>
       </Section>
 
-      <Section title="Close Rules" defaultOpen={false} forceOpen={closeRulesHasError}>
+      <Section title="Close Rules">
         <p className="mb-3 text-[0.72rem] leading-snug text-[var(--neu-text-muted)]">
           Same close automation as the scanner. Each switch reveals its input when turned on; off means the rule is disabled.
         </p>
@@ -579,21 +579,21 @@ export function BacktestConfigForm({
         </div>
       </Section>
 
-      <Section title="Risk Limits" defaultOpen={false} forceOpen={riskLimitsHasError}>
+      <Section title="Risk Limits">
         <div className={GRID}>
           <NumberField control={control} name="max_same_direction" label="Max positions same direction" nullable hint="Scanner: Max positions same direction" error={fieldError("max_same_direction")} />
           <NumberField control={control} name="max_signal_age_minutes" label="Max signal age (min)" nullable hint="Scanner: Max signal age (minutes)" error={fieldError("max_signal_age_minutes")} />
         </div>
       </Section>
 
-      <Section title="Symbol Filters" defaultOpen={false} forceOpen={anyError("symbol_whitelist", "symbol_blacklist")}>
+      <Section title="Symbol Filters">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <SymbolListField control={control} name="symbol_whitelist" label="Whitelist (only these)" hint="Scanner: Symbol whitelist · trade only these" error={fieldError("symbol_whitelist")} />
           <SymbolListField control={control} name="symbol_blacklist" label="Blacklist (never these)" hint="Scanner: Symbol blacklist · never trade these" error={fieldError("symbol_blacklist")} />
         </div>
       </Section>
 
-      <Section title="Target Goal" defaultOpen={false} forceOpen={targetGoalHasError}>
+      <Section title="Target Goal">
         <p className="mb-3 text-[0.72rem] leading-snug text-[var(--neu-text-muted)]">
           Scanner: Target goal — stops the whole cycle once reached. Different from &ldquo;Close and re-trade on profit&rdquo; in Close Rules, which closes mid-cycle and keeps trading.
         </p>
@@ -609,8 +609,6 @@ export function BacktestConfigForm({
 
       <Section
         title="Advanced (engine-level)"
-        defaultOpen={false}
-        forceOpen={advancedHasError}
         subtitle="Auto-trade engine features that are NOT shown in the scanner's config form. They still affect the backtest unless marked not-simulated."
       >
         <div className={GRID}>
@@ -644,8 +642,7 @@ export function BacktestConfigForm({
         </div>
       </Section>
 
-      <Section title="Market Regime & Strategy (F1/F2/F3)" defaultOpen={false}
-               forceOpen={regimeHasError}>
+      <Section title="Market Regime & Strategy (F1/F2/F3)">
         <p className="mb-3 text-[0.72rem] leading-5 text-[var(--neu-text-muted)]">
           Replay the regime features on history. All off by default. Modeling notes:
           F2-long honors mr_long_enabled (the live server-ack is bypassed — no live

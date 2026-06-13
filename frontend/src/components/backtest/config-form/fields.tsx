@@ -3,7 +3,6 @@ import { Controller, type Control, type FieldPath } from "react-hook-form";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { cn } from "@/lib/utils";
 import type { BacktestConfigFormValues } from "../configSchema";
 
 /* ----------------------------- small field helpers ----------------------------- */
@@ -341,52 +340,20 @@ export function Section({
   title,
   subtitle,
   children,
-  defaultOpen = true,
-  forceOpen = false,
 }: {
   title: string;
-  /** Optional one-line description shown under the section title when expanded. */
+  /** Optional one-line description shown under the section title. */
   subtitle?: string;
   children: React.ReactNode;
-  defaultOpen?: boolean;
-  /** When true (e.g. the section contains a validation error), force it open. */
-  forceOpen?: boolean;
 }) {
-  // Initialize open from defaultOpen OR an initial forceOpen so a section mounted
-  // already-forced (e.g. a seeded form that fails validation immediately) starts
-  // open — matching the original mount-time effect behavior.
-  const [open, setOpen] = React.useState(defaultOpen || forceOpen);
-  // AI-CONTEXT: A failed submit inside a collapsed section must reveal its errors.
-  // We open on the rising edge of `forceOpen` using React's "adjust state during
-  // render when a prop changes" pattern rather than a setState-in-effect
-  // (react-hooks/set-state-in-effect). Tracking the previous value preserves the
-  // original semantics: only the false→true transition forces it open, so the user
-  // can still manually collapse the section afterward while forceOpen stays true.
-  const [prevForceOpen, setPrevForceOpen] = React.useState(forceOpen);
-  if (forceOpen !== prevForceOpen) {
-    setPrevForceOpen(forceOpen);
-    if (forceOpen) setOpen(true);
-  }
   return (
-    <div className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-lg)] p-4">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-2 text-sm font-bold text-[var(--neu-text-strong)]"
-        aria-expanded={open}
-      >
-        <span className={cn("transition-transform", open ? "rotate-90" : "")}>›</span>
-        {title}
-      </button>
-      {open ? (
-        <div className="mt-4">
-          {subtitle ? (
-            <p className="mb-4 text-[0.72rem] leading-snug text-[var(--neu-text-muted)]">{subtitle}</p>
-          ) : null}
-          {children}
-        </div>
+    <section className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-lg)] p-4">
+      <h3 className="text-sm font-bold text-[var(--neu-text-strong)]">{title}</h3>
+      {subtitle ? (
+        <p className="mt-1 text-[0.72rem] leading-snug text-[var(--neu-text-muted)]">{subtitle}</p>
       ) : null}
-    </div>
+      <div className="mt-4">{children}</div>
+    </section>
   );
 }
 
