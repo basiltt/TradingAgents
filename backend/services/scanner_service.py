@@ -480,10 +480,19 @@ class ScannerService:
                 )
 
             block = build_regime_context_block(trend_pct, move_pct, skew)
+            # Observability: log on BOTH the built and the enabled-but-empty paths
+            # so an operator can confirm the feature is live and gauge how often it
+            # produces nothing (BTC directionless AND skew sample too small).
             if block:
                 logger.info(
-                    "regime_context built for scan %s (trend_pct=%s, skew_n=%s)",
-                    scan_id, trend_pct, (skew or {}).get("sample_n"),
+                    "regime_context built for scan %s (trend_pct=%s, move_pct=%s, skew_n=%s)",
+                    scan_id, trend_pct, move_pct, (skew or {}).get("sample_n"),
+                )
+            else:
+                logger.info(
+                    "regime_context enabled but empty for scan %s "
+                    "(trend_pct=%s, move_pct=%s, skew_n=%s)",
+                    scan_id, trend_pct, move_pct, (skew or {}).get("sample_n"),
                 )
             return block
 
@@ -1204,8 +1213,12 @@ class ScannerService:
 
         # ── Regime-context injection (FR-2): compute ONCE per scan, before the
         # per-coin fan-out, and cache on the scan dict. Default-OFF + fail-open,
-        # so this is a safe no-op (returns "") for the default fleet.
-        regime_ctx = await self._build_scan_regime_context(scan_id)
+        # so this is a safe no-op (returns "") for the default fleet. Skip the
+        # (up-to-10s) compute entirely if the scan was already cancelled.
+        async with self._lock:
+            _scan = self._scans.get(scan_id)
+            _cancelled = bool(_scan and _scan.get("cancel"))
+        regime_ctx = "" if _cancelled else await self._build_scan_regime_context(scan_id)
         async with self._lock:
             scan = self._scans.get(scan_id)
             if scan is not None:

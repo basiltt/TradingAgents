@@ -1724,10 +1724,16 @@ CREATE TABLE IF NOT EXISTS account_cooloff_state (
     # surface it (a silent 'failed' was undebuggable). Idempotent; needed for DBs
     # already past v52 (where mcp_sweep_jobs was created) on upgrade.
     (64, "ALTER TABLE mcp_sweep_jobs ADD COLUMN IF NOT EXISTS error_message TEXT"),
-    # Index supports get_recent_signal_skew()'s ORDER BY completed_at DESC scan
-    # (regime-context injection). Partial index on actionable rows keeps it small.
+    # Index for get_recent_signal_skew() (regime-context injection). The sort
+    # keys MUST match the query's ORDER BY exactly — "completed_at DESC NULLS
+    # LAST, id DESC" — or PG falls back to a full sort. Partial on actionable
+    # rows (ABS(score) >= 6) keeps it small; the 6 is the immutable lower bound
+    # the query also inlines so the planner can prove the predicate matches.
+    # Safe inline (brief SHARE lock; scan_results is small ~<1M rows). If the
+    # table ever grows large, rebuild this out-of-band as CREATE INDEX
+    # CONCURRENTLY (the transactional migration runner rejects CONCURRENTLY).
     (65, "CREATE INDEX IF NOT EXISTS idx_scan_results_completed_at "
-         "ON scan_results(completed_at DESC) WHERE ABS(score) >= 6"),
+         "ON scan_results(completed_at DESC NULLS LAST, id DESC) WHERE ABS(score) >= 6"),
 ]
 
 
@@ -2243,14 +2249,28 @@ class AsyncAnalysisDB:
         and returns ``{short_pct, long_pct, sample_n, window}``. ``scan_results``
         has no ``account_id`` column, so this is account-agnostic by construction.
         Negative score = short signal, positive = long.
+
+        KNOWN LIMITATION (single-schedule today): the window is GLOBAL across all
+        scan schedules — there is no ``schedule_id`` filter. If multiple scan
+        schedules with different universes/strategies run concurrently in the
+        future, their signals blend into one "book." Add a ``schedule_id`` param
+        to scope it when that day comes; it is intentionally unscoped for now.
+
+        ``min_abs_score`` is INLINED as an integer literal (coerced + bounded
+        below) rather than bound as a parameter, so PostgreSQL can prove it
+        matches the partial index ``WHERE ABS(score) >= 6``. A bound parameter
+        (``$1``) defeats the partial index under a cached generic plan. Callers
+        that pass a value other than the index's 6 simply get a full scan — which
+        is fine (the query is run once per scan), but the default path stays fast.
         """
+        # Coerce to a safe non-negative int — this value is interpolated into SQL.
+        min_score_literal = max(0, int(min_abs_score))
         rows = await self.pool.fetch(
             "SELECT score FROM scan_results "
-            "WHERE ABS(score) >= $1 "
-            "  AND ($2::text IS NULL OR scan_id <> $2) "
+            f"WHERE ABS(score) >= {min_score_literal} "
+            "  AND ($1::text IS NULL OR scan_id <> $1) "
             "ORDER BY completed_at DESC NULLS LAST, id DESC "
-            "LIMIT $3",
-            min_abs_score,
+            "LIMIT $2",
             exclude_scan_id,
             window,
         )
