@@ -40,6 +40,8 @@ export function FiltersAdvancedTab({ control, fieldError, setValue }: FiltersAdv
                   <label className="flex cursor-pointer items-start gap-2.5 text-[0.85rem] text-[var(--neu-text-strong)]">
                     <Checkbox
                       checked={on}
+                      aria-expanded={on}
+                      aria-controls={on ? "adaptive-blacklist-reveal" : undefined}
                       onCheckedChange={(c) => {
                         const next = c === true;
                         field.onChange(next);
@@ -62,7 +64,7 @@ export function FiltersAdvancedTab({ control, fieldError, setValue }: FiltersAdv
                     </span>
                   </label>
                   {on ? (
-                    <div className={`${GRID} mt-3`}>
+                    <div id="adaptive-blacklist-reveal" className={`${GRID} mt-3`}>
                       <NumberField control={control} name="adaptive_blacklist_min_trades" label="Min trades" hint="Engine-level · min trades before blacklisting" error={fieldError("adaptive_blacklist_min_trades")} />
                       <NumberField control={control} name="adaptive_blacklist_max_win_rate" label="Max win rate %" hint="Engine-level · blacklist below this win rate" error={fieldError("adaptive_blacklist_max_win_rate")} />
                       <NumberField control={control} name="adaptive_blacklist_lookback_hours" label="Lookback (hours)" hint="Engine-level · win-rate lookback window" error={fieldError("adaptive_blacklist_lookback_hours")} />

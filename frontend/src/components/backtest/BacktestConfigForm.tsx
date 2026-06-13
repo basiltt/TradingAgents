@@ -116,9 +116,11 @@ export type { ScheduleOption };
  * fails validation from a control that isn't in the DOM — an unfixable soft-lock.
  * The backtest engine ignores these when their feature is disabled (cooloff_core
  * gates on *_enabled; backtest_engine gates on adaptive_blacklist_enabled), so
- * forcing valid/empty values when off is inert. Mutates and returns `values`.
+ * forcing valid/empty values when off is inert. Returns a shallow copy; the input
+ * is never mutated (so callers can pass a stored/shared object safely).
  */
-function normalizeDisabledGroups(values: BacktestConfigFormValues): BacktestConfigFormValues {
+function normalizeDisabledGroups(input: BacktestConfigFormValues): BacktestConfigFormValues {
+  const values = { ...input };
   // Adaptive blacklist: deps are non-nullable with min/max — force valid defaults.
   if (!values.adaptive_blacklist_enabled) {
     values.adaptive_blacklist_min_trades = ADAPTIVE_BLACKLIST_DEFAULTS.min_trades;
@@ -270,9 +272,11 @@ export function BacktestConfigForm({
   // breakeven-timeout and force-close fields together (scanner seeds 4h / 8h).
   const breakevenHours = watch("breakeven_timeout_hours");
   const maxDurationHours = watch("max_trade_duration_hours");
-  const durationLimitsOn =
-    (breakevenHours != null && Number(breakevenHours) > 0) ||
-    (maxDurationHours != null && Number(maxDurationHours) > 0);
+  // Gate on null, NOT `> 0`: toggling off sets both to null, so null === collapsed.
+  // `> 0` would unmount the revealed inputs the instant a user types a leading "0"
+  // (e.g. entering "0.5"), destroying focus and silently unchecking the toggle —
+  // the same trap fixed in ToggleNumberField's reveal gate.
+  const durationLimitsOn = breakevenHours != null || maxDurationHours != null;
   const formRef = React.useRef<HTMLFormElement>(null);
   const summaryRef = React.useRef<HTMLDivElement>(null);
 
