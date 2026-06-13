@@ -1140,7 +1140,7 @@ function ScheduleFormDialog({
               ))}
             </TabsList>
 
-            <TabsContent value="schedule" keepMounted>
+            <TabsContent value="schedule" keepMounted className="space-y-5">
           <div>
             <Label htmlFor="schedule-name" className="text-xs font-medium">Schedule Name</Label>
             <Input id="schedule-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="My daily scan" maxLength={255} className="mt-1.5" />
@@ -1243,7 +1243,7 @@ function ScheduleFormDialog({
           </div>
             </TabsContent>
 
-            <TabsContent value="scan" keepMounted>
+            <TabsContent value="scan" keepMounted className="space-y-5">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
                 <Label className="text-xs font-semibold text-[var(--neu-text-muted)] uppercase tracking-wider">LLM Provider</Label>
@@ -1334,7 +1334,7 @@ function ScheduleFormDialog({
             </div>
             </TabsContent>
 
-            <TabsContent value="analysis" keepMounted>
+            <TabsContent value="analysis" keepMounted className="space-y-5">
             <div className="flex flex-col gap-1.5">
               <Label className="text-xs font-semibold text-[var(--neu-text-muted)] uppercase tracking-wider">Output Language</Label>
               <Select value={outputLanguage} onValueChange={(v) => v != null && setOutputLanguage(v)}>
@@ -1398,7 +1398,7 @@ function ScheduleFormDialog({
             <AgentModelOverrides assetType="crypto" modelOptions={deepOptions} overrides={agentModelOverrides} onChange={setAgentModelOverrides} />
             </TabsContent>
 
-            <TabsContent value="models" keepMounted>
+            <TabsContent value="models" keepMounted className="space-y-5">
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center justify-between">
                 <Label className="text-xs font-medium">Backend URL / Proxy Endpoint</Label>
