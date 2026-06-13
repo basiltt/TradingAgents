@@ -5,6 +5,23 @@ import type { DashboardCard } from "@/api/client";
 import { NumberField, SelectField, Section, Hint, GRID } from "./fields";
 import type { TabProps, ScheduleOption } from "./tabProps";
 
+/** A `datetime-local` value carries no timezone; on submit the form does
+ * `new Date(value).toISOString()`, which interprets it in the BROWSER's local zone
+ * and converts to UTC. That conversion is otherwise invisible — e.g. in IST (UTC+5:30)
+ * a typed "18:30" is sent as "13:00Z". Surface the resolved UTC so the user sees both
+ * the local time they entered and the actual window the engine will run. */
+function UtcHint({ value }: { value: string }) {
+  if (!value) return null;
+  const d = new Date(value); // same interpretation as toCreateRequest()
+  if (Number.isNaN(d.getTime())) return null;
+  const utc = d.toISOString().slice(0, 16).replace("T", " ");
+  return (
+    <span className="text-[0.68rem] text-[var(--neu-text-muted)]" data-testid="utc-hint">
+      = {utc} UTC
+    </span>
+  );
+}
+
 interface SetupTabProps extends TabProps {
   schedules: ScheduleOption[];
   accounts: DashboardCard[];
@@ -34,7 +51,10 @@ export function SetupTab({ control, fieldError, schedules, accounts, scanMode, r
               control={control}
               name="date_range_start"
               render={({ field }) => (
-                <Input id="date_range_start" type="datetime-local" value={String(field.value ?? "")} onChange={field.onChange} onBlur={field.onBlur} aria-invalid={!!fieldError("date_range_start")} aria-describedby={fieldError("date_range_start") ? "date_range_start-error" : undefined} />
+                <>
+                  <Input id="date_range_start" type="datetime-local" value={String(field.value ?? "")} onChange={field.onChange} onBlur={field.onBlur} aria-invalid={!!fieldError("date_range_start")} aria-describedby={fieldError("date_range_start") ? "date_range_start-error" : undefined} />
+                  <UtcHint value={String(field.value ?? "")} />
+                </>
               )}
             />
             <Hint text="Backtest-only · which historical scans to replay (from)" />
@@ -48,7 +68,10 @@ export function SetupTab({ control, fieldError, schedules, accounts, scanMode, r
               control={control}
               name="date_range_end"
               render={({ field }) => (
-                <Input id="date_range_end" type="datetime-local" value={String(field.value ?? "")} onChange={field.onChange} onBlur={field.onBlur} aria-invalid={!!fieldError("date_range_end")} aria-describedby={fieldError("date_range_end") ? "date_range_end-error" : undefined} />
+                <>
+                  <Input id="date_range_end" type="datetime-local" value={String(field.value ?? "")} onChange={field.onChange} onBlur={field.onBlur} aria-invalid={!!fieldError("date_range_end")} aria-describedby={fieldError("date_range_end") ? "date_range_end-error" : undefined} />
+                  <UtcHint value={String(field.value ?? "")} />
+                </>
               )}
             />
             <Hint text="Backtest-only · which historical scans to replay (to)" />

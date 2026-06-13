@@ -43,7 +43,7 @@ const WARNING_LABELS: Record<string, string> = {
   cooloff_not_simulated_in_replay:
     "Cool Off Time is not simulated in replay mode — this reconstructs the account’s actual live trades, so cool-off-gated entries are not modeled here.",
   window_not_finalized_results_may_change:
-    "This window includes recent candles that have not fully closed yet. The exchange is still finalizing them, so re-running the same config later can produce a different result as the data settles — this is data maturing, not a config change. For a stable, reproducible number, end the window on a day that has fully closed.",
+    "This run had to fetch recent candles that the exchange has not finalized yet (some days in the window are not fully settled). Those provisional candles get corrected on a later run, so the SAME config can produce a different result until the window fully settles — this is data maturing, not a config change. For a stable, reproducible number, back-test a window whose days have all closed (a few days in the past).",
 };
 
 function warningLabel(code: string): string {

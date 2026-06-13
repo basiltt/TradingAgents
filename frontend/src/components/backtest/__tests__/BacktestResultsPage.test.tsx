@@ -544,7 +544,7 @@ describe("BacktestResultsPage", () => {
     renderWithClient(<BacktestResultsPage runId="run-123" />);
     expect(await screen.findByTestId("metrics-grid")).toBeInTheDocument();
     const banner = screen.getByTestId("result-warnings");
-    expect(banner).toHaveTextContent(/not fully closed yet/i);
+    expect(banner).toHaveTextContent(/has not finalized yet/i);
     expect(banner).toHaveTextContent(/data maturing, not a config change/i);
     // It must NOT fall back to the raw snake_case code.
     expect(banner).not.toHaveTextContent("window_not_finalized_results_may_change");

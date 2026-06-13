@@ -34,6 +34,22 @@ describe("BacktestConfigForm", () => {
     expect(req.date_range_end).toMatch(/Z$/);
   });
 
+  it("shows the resolved UTC alongside each local datetime input", async () => {
+    // The form submits new Date(localValue).toISOString(); a datetime-local input is
+    // wall-clock with no zone, so in a +offset zone the UTC differs from what's typed.
+    // The UTC hint must mirror exactly that conversion so the user sees both.
+    render(<BacktestConfigForm onSubmit={vi.fn()} />);
+    const start = screen.getByLabelText("Start") as HTMLInputElement;
+    fireEvent.change(start, { target: { value: "2026-06-04T18:30" } });
+    const expectedUtc = new Date("2026-06-04T18:30").toISOString().slice(0, 16).replace("T", " ");
+    await waitFor(() => {
+      const hints = screen.getAllByTestId("utc-hint");
+      expect(hints.some((h) => h.textContent?.includes(expectedUtc))).toBe(true);
+    });
+    // The hint label explicitly marks the value as UTC.
+    expect(screen.getAllByTestId("utc-hint")[0]).toHaveTextContent(/UTC/);
+  });
+
   it("clearing a cost field restores its default, not zero (no silent zero-cost run)", async () => {
     const onSubmit = vi.fn();
     render(<BacktestConfigForm onSubmit={onSubmit} />);

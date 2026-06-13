@@ -697,28 +697,6 @@ class BacktestService:
             value = value.replace(tzinfo=timezone.utc)
         return value + timedelta(seconds=seconds)
 
-    @staticmethod
-    def _window_is_unfinalized(report_end: Any, interval: str, now: datetime) -> bool:
-        """True when a backtest window ends in candles that have NOT fully closed yet.
-
-        A backtest is only reproducible once every candle in its window is closed
-        (immutable). While the window's tail is still forming, the kline cache keeps
-        replacing those provisional candles with finalized ones on each run, so the
-        same config yields a drifting result. We compare the user-facing window end
-        against the completion frontier (last fully-closed bar boundary) for the
-        simulation interval; an end at/before the frontier is fully finalized.
-
-        Pure + headless-testable: `now` is injected, never read from a clock here.
-        Returns False for a non-datetime end (advisory check must never raise).
-        """
-        if not isinstance(report_end, datetime):
-            return False
-        from backend.services.sealed_manifest import completion_frontier
-
-        if report_end.tzinfo is None:
-            report_end = report_end.replace(tzinfo=timezone.utc)
-        return report_end > completion_frontier(now, interval)
-
     async def _resolve_schedule_config_scan_filter(
         self,
         config: dict[str, Any],
@@ -1836,6 +1814,11 @@ class BacktestService:
             # warming failure must not abort the run — the post-load _check_kline_coverage
             # still guards the result, and the engine now SKIPS (not fabricates) any
             # signal still lacking a candle at its fill time.
+            # Tracks whether the warm-up had to fetch any not-yet-sealed candles for
+            # this window. >0 means the cache did NOT already hold final data for every
+            # day — so the run reflects freshly-fetched (still-maturing) candles and may
+            # differ once the window fully seals. Drives the unfinalized-window warning.
+            warmup_fetched = 0
             if self._kline_cache is not None:
                 try:
                     symbols = self._required_kline_symbols_for(simulation_config, signals)
@@ -1872,6 +1855,7 @@ class BacktestService:
                         raise BacktestCancelled
                     logger.info("backtest_cache_warmed", extra={"run_id": run_id, **(cov or {})})
                     _fetched = (cov or {}).get("fetched", 0)
+                    warmup_fetched = int(_fetched or 0)
                     self._emit_stage(
                         run_id, "warming_cache", "Price-data cache ready",
                         detail=(f"{_fetched} symbols fetched from exchange" if _fetched
@@ -2037,29 +2021,26 @@ class BacktestService:
             if no_kline and result.warnings is not None:
                 result.warnings.append(f"signals_dropped_no_kline_data_{no_kline}")
 
-            # Unfinalized-window guard: if the requested window extends into candles
-            # that have NOT fully closed yet (its end is at/after the completion
-            # frontier), the kline cache will keep replacing those provisional candles
-            # with finalized ones on later runs — so the SAME config re-run today vs
-            # tomorrow can yield a DIFFERENT result, with no code or config change. This
-            # is exactly the "my 1000+ result dropped" surprise: the morning run used
-            # provisional candles for the tail of the window; a later run used the
-            # finalized ones. Surface it so the number's drift is explained, not magic.
-            # (We warn rather than freeze provisional data — the finalized result is the
-            # CORRECT one; reproducibility comes once the window fully closes.)
-            if result.warnings is not None:
-                try:
-                    report_end = simulation_config.get(
-                        "_report_end", simulation_config["date_range_end"]
-                    )
-                    if self._window_is_unfinalized(
-                        report_end,
-                        simulation_config.get("simulation_interval", "5m"),
-                        datetime.now(tz=timezone.utc),
-                    ):
-                        result.warnings.append("window_not_finalized_results_may_change")
-                except Exception:  # noqa: BLE001 — advisory only, never fail the run
-                    logger.debug("unfinalized_window_check_skipped", exc_info=False)
+            # Unfinalized-window guard: a backtest is only reproducible once EVERY day
+            # in its window is SEALED (recorded immutable). A day can be "closed" (below
+            # the completion frontier) yet still unsealed — and a closed-but-unsealed day
+            # is re-fetched one last time to seal it, which can return CORRECTED candles
+            # that differ from an earlier provisional fetch. So the run that warms those
+            # candles uses provisional data; a later run uses the finalized data, and the
+            # SAME config can yield a DIFFERENT result with no code/config change. This is
+            # exactly the "my 1000+ result dropped" surprise — the morning run filled
+            # mid-window (Jun 8-9) trades on provisional candles; once they sealed at
+            # corrected prices, two trades flipped to losses, tripping a cool-off.
+            #
+            # The precise signal is whether THIS run had to fetch any not-yet-sealed
+            # candle for the window (warmup_fetched > 0) — measured against the actual
+            # cache state for the actual window, so it catches MID-window unsealed days,
+            # not just an unfinalized end (the earlier frontier-vs-end check missed this
+            # case: the window ended on an already-closed day while interior days were
+            # still settling). We warn rather than freeze provisional data — the finalized
+            # result is the CORRECT one; reproducibility comes once the window seals.
+            if result.warnings is not None and warmup_fetched > 0:
+                result.warnings.append("window_not_finalized_results_may_change")
 
             # Buy & Hold benchmark + excess return (Phase 4 carry-forward):
             # compare the strategy against simply holding BTC over the same window.
