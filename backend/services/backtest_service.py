@@ -697,6 +697,28 @@ class BacktestService:
             value = value.replace(tzinfo=timezone.utc)
         return value + timedelta(seconds=seconds)
 
+    @staticmethod
+    def _window_is_unfinalized(report_end: Any, interval: str, now: datetime) -> bool:
+        """True when a backtest window ends in candles that have NOT fully closed yet.
+
+        A backtest is only reproducible once every candle in its window is closed
+        (immutable). While the window's tail is still forming, the kline cache keeps
+        replacing those provisional candles with finalized ones on each run, so the
+        same config yields a drifting result. We compare the user-facing window end
+        against the completion frontier (last fully-closed bar boundary) for the
+        simulation interval; an end at/before the frontier is fully finalized.
+
+        Pure + headless-testable: `now` is injected, never read from a clock here.
+        Returns False for a non-datetime end (advisory check must never raise).
+        """
+        if not isinstance(report_end, datetime):
+            return False
+        from backend.services.sealed_manifest import completion_frontier
+
+        if report_end.tzinfo is None:
+            report_end = report_end.replace(tzinfo=timezone.utc)
+        return report_end > completion_frontier(now, interval)
+
     async def _resolve_schedule_config_scan_filter(
         self,
         config: dict[str, Any],
@@ -2014,6 +2036,30 @@ class BacktestService:
             no_kline = (result.filter_stats or {}).get("signals_no_kline", 0)
             if no_kline and result.warnings is not None:
                 result.warnings.append(f"signals_dropped_no_kline_data_{no_kline}")
+
+            # Unfinalized-window guard: if the requested window extends into candles
+            # that have NOT fully closed yet (its end is at/after the completion
+            # frontier), the kline cache will keep replacing those provisional candles
+            # with finalized ones on later runs — so the SAME config re-run today vs
+            # tomorrow can yield a DIFFERENT result, with no code or config change. This
+            # is exactly the "my 1000+ result dropped" surprise: the morning run used
+            # provisional candles for the tail of the window; a later run used the
+            # finalized ones. Surface it so the number's drift is explained, not magic.
+            # (We warn rather than freeze provisional data — the finalized result is the
+            # CORRECT one; reproducibility comes once the window fully closes.)
+            if result.warnings is not None:
+                try:
+                    report_end = simulation_config.get(
+                        "_report_end", simulation_config["date_range_end"]
+                    )
+                    if self._window_is_unfinalized(
+                        report_end,
+                        simulation_config.get("simulation_interval", "5m"),
+                        datetime.now(tz=timezone.utc),
+                    ):
+                        result.warnings.append("window_not_finalized_results_may_change")
+                except Exception:  # noqa: BLE001 — advisory only, never fail the run
+                    logger.debug("unfinalized_window_check_skipped", exc_info=False)
 
             # Buy & Hold benchmark + excess return (Phase 4 carry-forward):
             # compare the strategy against simply holding BTC over the same window.

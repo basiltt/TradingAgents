@@ -520,6 +520,36 @@ describe("BacktestResultsPage", () => {
     expect(banner).toHaveTextContent(/Max Same Sector.*not simulated/i);
   });
 
+  it("explains the unfinalized-window drift warning in plain language", async () => {
+    // The engine flags a window that ends in not-yet-closed candles; the user must
+    // learn WHY the same config can yield a different number on a later run (data
+    // maturing, not a config change) — the exact "my 1000+ result dropped" surprise.
+    server.use(
+      http.get("/api/v1/backtest/run-123", () =>
+        HttpResponse.json(
+          run({
+            results: {
+              metrics: metrics(),
+              equity_curve: [{ ts: "2026-01-01T00:00:00Z", equity: 10000 }],
+              summary: {},
+              warnings: ["window_not_finalized_results_may_change"],
+            },
+          }),
+        ),
+      ),
+      http.get("/api/v1/backtest/run-123/trades", () =>
+        HttpResponse.json({ trades: [], total: 0, page: 1 }),
+      ),
+    );
+    renderWithClient(<BacktestResultsPage runId="run-123" />);
+    expect(await screen.findByTestId("metrics-grid")).toBeInTheDocument();
+    const banner = screen.getByTestId("result-warnings");
+    expect(banner).toHaveTextContent(/not fully closed yet/i);
+    expect(banner).toHaveTextContent(/data maturing, not a config change/i);
+    // It must NOT fall back to the raw snake_case code.
+    expect(banner).not.toHaveTextContent("window_not_finalized_results_may_change");
+  });
+
   it("shows a retry affordance when the trades fetch fails", async () => {
     server.use(
       http.get("/api/v1/backtest/run-123", () => HttpResponse.json(run())),

@@ -559,3 +559,59 @@ class TestBuildFineKlines:
             f"AAA fetch window [{win_start}, {win_end}] must cover the 12:40 firing bar so "
             "the engine has full-book 1m coverage to walk the portfolio close"
         )
+
+
+class TestWindowIsUnfinalized:
+    """Reproducibility guard: a backtest window that ends in not-yet-closed candles
+    drifts between runs as the kline cache finalizes them. _window_is_unfinalized is
+    the pure predicate behind the `window_not_finalized_results_may_change` warning."""
+
+    def _svc(self, mock_db):
+        from backend.services.backtest_service import BacktestService
+        return BacktestService(db=mock_db)
+
+    def test_fully_closed_window_is_finalized(self, mock_db):
+        # now = Jun 13 12:00; a window ending Jun 11 00:00 is days behind the frontier.
+        now = datetime(2026, 6, 13, 12, 0, tzinfo=timezone.utc)
+        end = datetime(2026, 6, 11, 0, 0, tzinfo=timezone.utc)
+        assert self._svc(mock_db)._window_is_unfinalized(end, "5m", now) is False
+
+    def test_window_ending_in_the_future_is_unfinalized(self, mock_db):
+        now = datetime(2026, 6, 13, 12, 0, tzinfo=timezone.utc)
+        end = datetime(2026, 6, 13, 23, 59, tzinfo=timezone.utc)  # past the frontier
+        assert self._svc(mock_db)._window_is_unfinalized(end, "5m", now) is True
+
+    def test_window_ending_inside_the_forming_bar_is_unfinalized(self, mock_db):
+        # now sits mid-bar (12:03 on a 5m grid → frontier = 12:00). An end at 12:02
+        # falls in the still-forming [12:00,12:05) bar → not finalized.
+        now = datetime(2026, 6, 13, 12, 3, tzinfo=timezone.utc)
+        end = datetime(2026, 6, 13, 12, 2, tzinfo=timezone.utc)
+        assert self._svc(mock_db)._window_is_unfinalized(end, "5m", now) is True
+
+    def test_window_ending_exactly_on_the_frontier_is_finalized(self, mock_db):
+        # End == frontier means the last fully-closed bar boundary → finalized (>, not >=).
+        now = datetime(2026, 6, 13, 12, 3, tzinfo=timezone.utc)
+        end = datetime(2026, 6, 13, 12, 0, tzinfo=timezone.utc)  # == 5m frontier
+        assert self._svc(mock_db)._window_is_unfinalized(end, "5m", now) is False
+
+    def test_naive_end_is_treated_as_utc(self, mock_db):
+        now = datetime(2026, 6, 13, 12, 0, tzinfo=timezone.utc)
+        naive_future = datetime(2026, 6, 13, 23, 59)  # no tzinfo → coerced to UTC
+        assert self._svc(mock_db)._window_is_unfinalized(naive_future, "5m", now) is True
+
+    def test_non_datetime_end_is_safe_false(self, mock_db):
+        # Advisory check must never raise on an unexpected type.
+        now = datetime(2026, 6, 13, 12, 0, tzinfo=timezone.utc)
+        assert self._svc(mock_db)._window_is_unfinalized("2026-06-13", "5m", now) is False
+        assert self._svc(mock_db)._window_is_unfinalized(None, "5m", now) is False
+
+    def test_interval_changes_the_frontier(self, mock_db):
+        # On a 1h grid the frontier floors to the hour: now=12:30 → frontier 12:00.
+        # An end at 12:20 is inside the forming hourly bar → unfinalized, even though
+        # on a 5m grid (frontier 12:25) the same end would be... still unfinalized;
+        # pick an end that flips: 12:10 is finalized at 5m (<=12:25) but NOT at 1h.
+        now = datetime(2026, 6, 13, 12, 30, tzinfo=timezone.utc)
+        end = datetime(2026, 6, 13, 12, 10, tzinfo=timezone.utc)
+        svc = self._svc(mock_db)
+        assert svc._window_is_unfinalized(end, "5m", now) is False  # <= 12:25 frontier
+        assert svc._window_is_unfinalized(end, "1h", now) is True   # > 12:00 frontier

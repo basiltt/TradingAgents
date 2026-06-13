@@ -42,6 +42,8 @@ const WARNING_LABELS: Record<string, string> = {
     "The BTC volatility filter is evaluated from historical klines as of each scan time.",
   cooloff_not_simulated_in_replay:
     "Cool Off Time is not simulated in replay mode — this reconstructs the account’s actual live trades, so cool-off-gated entries are not modeled here.",
+  window_not_finalized_results_may_change:
+    "This window includes recent candles that have not fully closed yet. The exchange is still finalizing them, so re-running the same config later can produce a different result as the data settles — this is data maturing, not a config change. For a stable, reproducible number, end the window on a day that has fully closed.",
 };
 
 function warningLabel(code: string): string {
