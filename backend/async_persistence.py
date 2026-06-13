@@ -16,6 +16,24 @@ import asyncpg
 
 logger = logging.getLogger(__name__)
 
+
+def _signal_skew_from_counts(*, short: int, long: int, window: int) -> Dict[str, Any]:
+    """Pure reduction of short/long signal counts → skew dict (FR-2.3).
+
+    Account-agnostic; returns percentages of the sampled (short+long) total.
+    Kept module-level and side-effect-free so it is unit-testable without a DB.
+    """
+    sample_n = int(short) + int(long)
+    if sample_n <= 0:
+        return {"short_pct": 0.0, "long_pct": 0.0, "sample_n": 0, "window": int(window)}
+    return {
+        "short_pct": short / sample_n * 100.0,
+        "long_pct": long / sample_n * 100.0,
+        "sample_n": sample_n,
+        "window": int(window),
+    }
+
+
 # ── Schema & Migrations (identical to persistence.py) ──────────────────
 
 _SCHEMA_V1 = """
@@ -1706,6 +1724,16 @@ CREATE TABLE IF NOT EXISTS account_cooloff_state (
     # surface it (a silent 'failed' was undebuggable). Idempotent; needed for DBs
     # already past v52 (where mcp_sweep_jobs was created) on upgrade.
     (64, "ALTER TABLE mcp_sweep_jobs ADD COLUMN IF NOT EXISTS error_message TEXT"),
+    # Index for get_recent_signal_skew() (regime-context injection). The sort
+    # keys MUST match the query's ORDER BY exactly — "completed_at DESC NULLS
+    # LAST, id DESC" — or PG falls back to a full sort. Partial on actionable
+    # rows (ABS(score) >= 6) keeps it small; the 6 is the immutable lower bound
+    # the query also inlines so the planner can prove the predicate matches.
+    # Safe inline (brief SHARE lock; scan_results is small ~<1M rows). If the
+    # table ever grows large, rebuild this out-of-band as CREATE INDEX
+    # CONCURRENTLY (the transactional migration runner rejects CONCURRENTLY).
+    (65, "CREATE INDEX IF NOT EXISTS idx_scan_results_completed_at "
+         "ON scan_results(completed_at DESC NULLS LAST, id DESC) WHERE ABS(score) >= 6"),
 ]
 
 
@@ -2206,6 +2234,49 @@ class AsyncAnalysisDB:
             _analysis_price,
         )
         return row["id"] if row else None
+
+    async def get_recent_signal_skew(
+        self,
+        *,
+        exclude_scan_id: Optional[str] = None,
+        window: int = 200,
+        min_abs_score: int = 6,
+    ) -> Dict[str, Any]:
+        """Account-agnostic recent-signal short/long skew over scan_results (FR-2.3).
+
+        Looks at the most recent ``window`` actionable rows (``ABS(score) >=
+        min_abs_score``), optionally excluding the in-flight ``exclude_scan_id``,
+        and returns ``{short_pct, long_pct, sample_n, window}``. ``scan_results``
+        has no ``account_id`` column, so this is account-agnostic by construction.
+        Negative score = short signal, positive = long.
+
+        KNOWN LIMITATION (single-schedule today): the window is GLOBAL across all
+        scan schedules — there is no ``schedule_id`` filter. If multiple scan
+        schedules with different universes/strategies run concurrently in the
+        future, their signals blend into one "book." Add a ``schedule_id`` param
+        to scope it when that day comes; it is intentionally unscoped for now.
+
+        ``min_abs_score`` is INLINED as an integer literal (coerced + bounded
+        below) rather than bound as a parameter, so PostgreSQL can prove it
+        matches the partial index ``WHERE ABS(score) >= 6``. A bound parameter
+        (``$1``) defeats the partial index under a cached generic plan. Callers
+        that pass a value other than the index's 6 simply get a full scan — which
+        is fine (the query is run once per scan), but the default path stays fast.
+        """
+        # Coerce to a safe non-negative int — this value is interpolated into SQL.
+        min_score_literal = max(0, int(min_abs_score))
+        rows = await self.pool.fetch(
+            "SELECT score FROM scan_results "
+            f"WHERE ABS(score) >= {min_score_literal} "
+            "  AND ($1::text IS NULL OR scan_id <> $1) "
+            "ORDER BY completed_at DESC NULLS LAST, id DESC "
+            "LIMIT $2",
+            exclude_scan_id,
+            window,
+        )
+        short = sum(1 for r in rows if (r["score"] or 0) < 0)
+        long = sum(1 for r in rows if (r["score"] or 0) > 0)
+        return _signal_skew_from_counts(short=short, long=long, window=window)
 
     async def get_scan(self, scan_id: str) -> Optional[Dict[str, Any]]:
         """Return a scan with its results (ordered by |score|), or None if not found.

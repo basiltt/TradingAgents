@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 import json as _json
 import logging
+import os
 import random
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from backend.services.analysis_service import DEFAULT_MAX_CONCURRENT, ConcurrencyLimitError
@@ -18,6 +19,28 @@ logger = logging.getLogger(__name__)
 
 _BATCH_SIZE = 10  # default; overridden by config max_parallel (1–15)
 _MAX_PARALLEL_CAP = 15
+
+# ── Regime-context injection (spec FR-2/FR-5; default-OFF, fully reversible) ──
+# BTC regime is read LIVE from Bybit (not the kline_cache table, which only holds
+# 5m backtest candles and is not kept current). Bybit uses numeric interval codes:
+# "60" = 1 hour. The scan-config `interval` (often "D"/"15") is deliberately NOT
+# used for the regime probe.
+REGIME_BTC_INTERVAL_BYBIT = "60"  # Bybit code for 1-hour candles
+REGIME_BTC_LOOKBACK = 14
+REGIME_ACTIONABLE_MIN_SCORE = 6
+REGIME_SKEW_WINDOW = 200
+# Hard wall-clock budget for the whole regime-context compute (live BTC fetch +
+# skew query). Best-effort: exceeding it fails open to "" rather than delaying
+# the per-coin fan-out. Bybit self-deadlines at ~45s, so this is the real cap.
+REGIME_COMPUTE_TIMEOUT_S = 10.0
+
+
+def _regime_context_enabled() -> bool:
+    """True when TRADINGAGENTS_REGIME_CONTEXT is truthy (default OFF)."""
+    return (os.environ.get("TRADINGAGENTS_REGIME_CONTEXT", "") or "").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
 _TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
 
 _VALID_DIRECTIONS = frozenset({"buy", "sell", "hold"})
@@ -400,6 +423,87 @@ class ScannerService:
                 continue
             stored = (accounts.get(cfg.get("account_id")) or {}).get("strategy_cohort")
             cfg["strategy_cohort"] = _feat.resolve_cohort(cfg.get("strategy_cohort"), stored)
+
+    async def _build_scan_regime_context(self, scan_id: str) -> str:
+        """Compute the account-agnostic regime-context string once per scan (FR-2).
+
+        Default-OFF (flag-gated) and fail-open: any error → "" + WARNING, so a
+        scan never fails because regime context could not be built. Touches NO
+        money-path module — only the pure builder + a LIVE BTC kline read
+        (``get_bybit_klines``, the same live source the analyst price-context
+        uses) + a recent-signal skew query.
+
+        NOTE: BTC data is fetched LIVE from Bybit (interval "60" = 1h), NOT from
+        the ``kline_cache`` table — that table is a backtest snapshot that only
+        ever holds 5m candles and is not kept current, so reading it would make
+        this feature silently produce no BTC direction.
+        """
+        if not _regime_context_enabled():
+            return ""
+
+        async def _compute() -> str:
+            import time as _time
+
+            from tradingagents.agents.utils.regime_context import (
+                btc_scalars_from_closes,
+                build_regime_context_block,
+                closes_from_kline_csv,
+            )
+
+            # ── Live BTC closes (1h candles, ~last N hours) via Bybit ──
+            trend_pct = move_pct = None
+            try:
+                from tradingagents.dataflows.bybit_data import get_bybit_klines
+
+                now_ms = int(_time.time() * 1000)
+                # lookback*2 + margin hourly candles → enough for a stable EMA
+                hours = REGIME_BTC_LOOKBACK * 2 + 10
+                start_ms = now_ms - hours * 3600_000
+                csv_text = await asyncio.to_thread(
+                    get_bybit_klines, "BTCUSDT", REGIME_BTC_INTERVAL_BYBIT, start_ms, now_ms
+                )
+                closes = closes_from_kline_csv(csv_text)
+                if closes:
+                    trend_pct, move_pct = btc_scalars_from_closes(closes, REGIME_BTC_LOOKBACK)
+                else:
+                    logger.warning("regime_context: no BTC klines for scan %s (live fetch empty)", scan_id)
+            except Exception:
+                logger.warning("regime_context: BTC live fetch failed for scan %s", scan_id, exc_info=True)
+
+            # Recent-signal skew (account-agnostic) via the DB read method.
+            skew = None
+            if self._db is not None:
+                skew = await self._db.get_recent_signal_skew(
+                    exclude_scan_id=scan_id,
+                    window=REGIME_SKEW_WINDOW,
+                    min_abs_score=REGIME_ACTIONABLE_MIN_SCORE,
+                )
+
+            block = build_regime_context_block(trend_pct, move_pct, skew)
+            # Observability: log on BOTH the built and the enabled-but-empty paths
+            # so an operator can confirm the feature is live and gauge how often it
+            # produces nothing (BTC directionless AND skew sample too small).
+            if block:
+                logger.info(
+                    "regime_context built for scan %s (trend_pct=%s, move_pct=%s, skew_n=%s)",
+                    scan_id, trend_pct, move_pct, (skew or {}).get("sample_n"),
+                )
+            else:
+                logger.info(
+                    "regime_context enabled but empty for scan %s "
+                    "(trend_pct=%s, move_pct=%s, skew_n=%s)",
+                    scan_id, trend_pct, move_pct, (skew or {}).get("sample_n"),
+                )
+            return block
+
+        # Hard wall-clock budget: regime context is best-effort, so a slow Bybit
+        # fetch OR a stalled DB query must NEVER delay the scan's per-coin fan-out
+        # beyond this. wait_for converts a hang into a TimeoutError → fail-open "".
+        try:
+            return await asyncio.wait_for(_compute(), timeout=REGIME_COMPUTE_TIMEOUT_S)
+        except Exception:
+            logger.warning("regime_context build failed/timed out for scan %s — using ''", scan_id, exc_info=True)
+            return ""
 
     async def _set_executor_scan_context(self, executor, auto_configs: List[Dict[str, Any]]) -> None:
         """Read the kill-switch unconditionally + build the scan-time ScanContext and
@@ -1107,6 +1211,19 @@ class ScannerService:
         if self._db and symbols_override is None:
             await self._db.update_scan(scan_id, total=len(symbols))
 
+        # ── Regime-context injection (FR-2): compute ONCE per scan, before the
+        # per-coin fan-out, and cache on the scan dict. Default-OFF + fail-open,
+        # so this is a safe no-op (returns "") for the default fleet. Skip the
+        # (up-to-10s) compute entirely if the scan was already cancelled.
+        async with self._lock:
+            _scan = self._scans.get(scan_id)
+            _cancelled = bool(_scan and _scan.get("cancel"))
+        regime_ctx = "" if _cancelled else await self._build_scan_regime_context(scan_id)
+        async with self._lock:
+            scan = self._scans.get(scan_id)
+            if scan is not None:
+                scan["regime_context"] = regime_ctx
+
         # Only prefetch CoinGecko data when fundamentals/social analysts are selected
         async with self._lock:
             scan = self._scans.get(scan_id)
@@ -1286,6 +1403,7 @@ class ScannerService:
             if not scan or scan["cancel"]:
                 return
             config = scan["config"]
+            regime_context = scan.get("regime_context", "") or ""
 
         request = {
             "ticker": ticker,
@@ -1312,6 +1430,7 @@ class ScannerService:
             "ta_prefilter_threshold": config.get("ta_prefilter_threshold"),
             "llm_max_concurrent": config.get("llm_max_concurrent"),
             "llm_min_spacing_ms": config.get("llm_min_spacing_ms"),
+            "regime_context": regime_context,
         }
 
         try:

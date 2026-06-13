@@ -74,7 +74,6 @@ def create_crypto_technical_analyst(llm, crypto_tools: list):
         crypto_interval = filtered.get("crypto_interval")
         instrument_context = build_instrument_context(filtered.get("company_of_interest", ""), crypto_interval)
         price_context = wrap_external_data(filtered.get("current_price_context", ""), "exchange_ticker")
-        regime_ctx = filtered.get("regime_context", "") or ""
 
         from tradingagents.dataflows.bybit_data import get_higher_timeframe
         tools = [t for t in crypto_tools if t.name in ("get_crypto_klines", "get_crypto_indicators", "get_volatility_regime", "get_btc_eth_correlation")]
@@ -112,10 +111,6 @@ def create_crypto_technical_analyst(llm, crypto_tools: list):
             "at the end of your report listing which data sources were unavailable."
             " Write a detailed report with a Markdown summary table at the end."
             + htf_instruction
-            + (
-                f"\n\n--- MARKET REGIME CONTEXT ---\n{regime_ctx}\n"
-                if regime_ctx else ""
-            )
             + get_language_instruction()
         )
 
@@ -160,7 +155,6 @@ def create_crypto_derivatives_analyst(llm, crypto_tools: list):
         crypto_interval = filtered.get("crypto_interval")
         instrument_context = build_instrument_context(filtered.get("company_of_interest", ""), crypto_interval)
         price_context = wrap_external_data(filtered.get("current_price_context", ""), "exchange_ticker")
-        regime_ctx = filtered.get("regime_context", "") or ""
         # Prefer the combined derivatives tool; fall back to individual tools
         combined = [t for t in crypto_tools if t.name == "get_crypto_derivatives_data"]
         if combined:
@@ -185,10 +179,6 @@ def create_crypto_derivatives_analyst(llm, crypto_tools: list):
             "If any tool returns an [ERROR], include a **Data Quality Warning** section "
             "at the end of your report listing which data sources were unavailable."
             " Write a detailed report with a Markdown summary table at the end."
-            + (
-                f"\n\n--- MARKET REGIME CONTEXT ---\n{regime_ctx}\n"
-                if regime_ctx else ""
-            )
             + get_language_instruction()
         )
 
@@ -231,7 +221,6 @@ def create_crypto_news_analyst(llm):
         crypto_interval = filtered.get("crypto_interval")
         instrument_context = build_instrument_context(filtered.get("company_of_interest", ""), crypto_interval)
         price_context = wrap_external_data(filtered.get("current_price_context", ""), "exchange_ticker")
-        regime_ctx = filtered.get("regime_context", "") or ""
         tools = [get_news, get_global_news]
 
         system_message = (
@@ -242,10 +231,6 @@ def create_crypto_news_analyst(llm):
             "If any tool returns an [ERROR], include a **Data Quality Warning** section "
             "at the end of your report listing which data sources were unavailable."
             " Write a comprehensive report with a Markdown summary table at the end."
-            + (
-                f"\n\n--- MARKET REGIME CONTEXT ---\n{regime_ctx}\n"
-                if regime_ctx else ""
-            )
             + get_language_instruction()
         )
 
@@ -288,7 +273,6 @@ def create_crypto_fundamentals_analyst(llm, coingecko_tools: list):
         crypto_interval = filtered.get("crypto_interval")
         instrument_context = build_instrument_context(filtered.get("company_of_interest", ""), crypto_interval)
         price_context = wrap_external_data(filtered.get("current_price_context", ""), "exchange_ticker")
-        regime_ctx = filtered.get("regime_context", "") or ""
         tools = [t for t in coingecko_tools if t.name == "get_crypto_market_data"]
         if not tools:
             raise ValueError("No market data tool found in coingecko_tools")
@@ -305,10 +289,6 @@ def create_crypto_fundamentals_analyst(llm, coingecko_tools: list):
             "If any tool returns an [ERROR], include a **Data Quality Warning** section "
             "at the end of your report listing which data sources were unavailable. "
             "Write a detailed report with a Markdown summary table at the end."
-            + (
-                f"\n\n--- MARKET REGIME CONTEXT ---\n{regime_ctx}\n"
-                if regime_ctx else ""
-            )
             + get_language_instruction()
         )
 
@@ -1032,6 +1012,10 @@ def create_crypto_portfolio_manager(llm, max_leverage: int = 20):
         crypto_interval = filtered.get("crypto_interval")
         instrument_context = build_instrument_context(company, crypto_interval)
         price_context = wrap_external_data(filtered.get("current_price_context", ""), "exchange_ticker")
+        # Regime-context injection (FR-4): account-agnostic block, empty-guarded so
+        # an absent/"" value leaves the prompt byte-identical to the legacy prompt.
+        regime_ctx = (filtered.get("regime_context", "") or "").strip()
+        regime_block = f"{regime_ctx}\n\n" if regime_ctx else ""
         risk_debate_state = filtered.get("risk_debate_state", {})
         history = _truncate_history(risk_debate_state.get("history", ""))
         research_plan = wrap_external_data(filtered.get("investment_plan", ""), "research_manager")
@@ -1054,6 +1038,7 @@ def create_crypto_portfolio_manager(llm, max_leverage: int = 20):
             f"data-fetching function. Base your decision solely on the data provided below.\n\n"
             f"{instrument_context}\n\n"
             f"CURRENT PRICE DATA (use as reference for entry/SL/TP levels):\n{price_context}\n\n"
+            f"{regime_block}"
             f"Max allowed leverage: {max_leverage}x\n\n"
             f"**Rating Scale** (for the structured rating field):\n"
             f"- **Buy**: Strong conviction to go LONG — price will rise significantly\n"
