@@ -119,3 +119,42 @@ async def test_optimize_config_real_data_path_loads_inputs_once():
     # a winner is produced and ranked by the aliased total_return (net_profit_pct)
     assert sc["winner"] is not None
     assert sc["total_combos"] == 2
+
+
+class _DateCapturingRunner(_RealishRunner):
+    """Records the date_range_* values load_inputs receives so a test can assert
+    they were coerced to datetime (not raw ISO strings) before reaching the DB."""
+
+    def __init__(self):
+        super().__init__()
+        self.seen_dates: list[tuple[Any, Any]] = []
+
+    async def load_inputs(self, config):
+        self.seen_dates.append(
+            (config.get("date_range_start"), config.get("date_range_end"))
+        )
+        return await super().load_inputs(config)
+
+
+@pytest.mark.asyncio
+async def test_optimize_config_coerces_iso_string_dates_to_datetime():
+    """Regression: the agent sends ISO STRINGS for the window. They must be
+    coerced to tz-aware datetimes before load_inputs binds them to asyncpg
+    timestamptz params, otherwise asyncpg raises 'expected datetime, got str'
+    and the sweep dies at 0 combos. Mirrors backtest_run's datetime schema."""
+    from datetime import datetime, timezone
+
+    runner = _DateCapturingRunner()
+    spec = _REGISTRY["optimize_config"]
+    r = await dispatch(spec, {
+        "space": {"leverage": [5, 10]}, "objective": "total_return", "strategy": "grid",
+        "date_range_start": "2026-06-04T18:30:00Z", "date_range_end": "2026-06-13T03:00:00Z",
+        "starting_capital": 1000.0,
+    }, _ctx(runner), audit=lambda x: None)
+    assert r["isError"] is False, r
+    assert runner.seen_dates, "load_inputs was never called"
+    start, end = runner.seen_dates[0]
+    assert isinstance(start, datetime) and isinstance(end, datetime)
+    # tz-aware UTC, matching the live backtest_run coercion
+    assert start == datetime(2026, 6, 4, 18, 30, tzinfo=timezone.utc)
+    assert end == datetime(2026, 6, 13, 3, 0, tzinfo=timezone.utc)

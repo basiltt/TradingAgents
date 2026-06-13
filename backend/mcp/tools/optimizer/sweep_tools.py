@@ -29,6 +29,7 @@ from backend.mcp.tools.optimizer.ranker import (
     _objective_value,
     rank_results,
 )
+from backend.mcp.tools.optimizer.window import parse_window_dt
 
 
 class SweepRunIn(BaseModel):
@@ -148,10 +149,19 @@ async def sweep_run(args: SweepRunIn, ctx: Any) -> SweepRunOut:
     instrument_info: dict[str, Any] = {}
     base_cfg = dict(args.base or {})
     if args.date_range_start and args.date_range_end and hasattr(runner, "load_inputs"):
+        # Coerce the agent's ISO-8601 strings to tz-aware datetimes BEFORE
+        # load_inputs binds them to asyncpg timestamptz params (asyncpg rejects a
+        # str for a timestamptz arg → 'expected datetime, got str', which had been
+        # killing every windowed sweep at 0 combos).
+        try:
+            start_dt = parse_window_dt(args.date_range_start, field="date_range_start")
+            end_dt = parse_window_dt(args.date_range_end, field="date_range_end")
+        except ValueError as exc:
+            raise MCPValidationError(str(exc)) from exc
         try:
             signals, snapshot, instrument_info = await runner.load_inputs({
-                **base_cfg, "date_range_start": args.date_range_start,
-                "date_range_end": args.date_range_end, "scan_source": args.scan_source or {},
+                **base_cfg, "date_range_start": start_dt,
+                "date_range_end": end_dt, "scan_source": args.scan_source or {},
                 "starting_capital": args.starting_capital,
             })
         except Exception as exc:  # noqa: BLE001

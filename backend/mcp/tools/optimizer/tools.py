@@ -22,6 +22,7 @@ from backend.mcp.tools.optimizer.combos import (
     _grid_count,
 )
 from backend.mcp.tools.optimizer.ranker import OBJECTIVE_METRICS
+from backend.mcp.tools.optimizer.window import parse_window_dt
 
 
 def _validate_scan_source(scan_source: Optional[dict[str, Any]]) -> None:
@@ -194,10 +195,18 @@ async def optimize_config(args: OptimizeConfigIn, ctx: Any) -> OptimizeConfigOut
                 base_cfg = {**base_cfg, **target_live_config}
 
     if args.date_range_start and args.date_range_end and hasattr(runner, "load_inputs"):
+        # Coerce the agent's ISO-8601 strings to tz-aware datetimes BEFORE
+        # load_inputs binds them to asyncpg timestamptz params (asyncpg rejects a
+        # str for a timestamptz arg → 'expected datetime, got str').
+        try:
+            start_dt = parse_window_dt(args.date_range_start, field="date_range_start")
+            end_dt = parse_window_dt(args.date_range_end, field="date_range_end")
+        except ValueError as exc:
+            raise MCPValidationError(str(exc)) from exc
         load_cfg = {
             **base_cfg,
-            "date_range_start": args.date_range_start,
-            "date_range_end": args.date_range_end,
+            "date_range_start": start_dt,
+            "date_range_end": end_dt,
             "scan_source": args.scan_source or {},
             "starting_capital": args.starting_capital,
         }

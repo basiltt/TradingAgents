@@ -20,26 +20,42 @@ class _Runner:
                 "total_trades": 40, "top_trade_pnl_share": 0.2, "expectancy": 1.0}
 
 
+class _LoadInputsRunner(_Runner):
+    """Runner with load_inputs that records the date_range_* values it receives,
+    so a test can assert sweep_run coerced the agent's ISO strings to datetimes
+    before they hit asyncpg's timestamptz binds."""
+
+    def __init__(self):
+        self.seen_dates: list[tuple] = []
+
+    async def load_inputs(self, config):
+        self.seen_dates.append(
+            (config.get("date_range_start"), config.get("date_range_end"))
+        )
+        return [], {}, {}
+
+
+
 class _State:
     """Minimal app.state stand-in carrying the real sweep_repo + a task registry."""
-    def __init__(self, repo):
+    def __init__(self, repo, runner=None):
         self.mcp_sweep_repo = repo
-        self.backtest_runner = _Runner()
-        self.mcp_backtest_runner = _Runner()
+        self.backtest_runner = runner or _Runner()
+        self.mcp_backtest_runner = runner or _Runner()
         self.db = None
 
 
 class _Services:
-    def __init__(self, repo):
-        self._state = _State(repo)
+    def __init__(self, repo, runner=None):
+        self._state = _State(repo, runner)
         self.sweep_repo = repo
-        self.backtest_runner = _Runner()
+        self.backtest_runner = runner or _Runner()
         self.db = None
 
 
-def _ctx(repo):
+def _ctx(repo, runner=None):
     return CallContext(principal="t", session_id="s", tier="BACKTEST",
-                       correlation_id=None, services=_Services(repo), clock=RealClock())
+                       correlation_id=None, services=_Services(repo, runner), clock=RealClock())
 
 
 async def _call(name, args, ctx):
@@ -105,3 +121,39 @@ async def test_sweep_cancel(mcp_pool):
     c = await _call("sweep_cancel", {"sweep_id": sid}, ctx)
     assert c["structuredContent"]["cancelled"] is True
     assert (await repo.get_job(sid))["status"] == "cancelled"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_sweep_run_coerces_iso_string_dates_to_datetime(mcp_pool):
+    """Regression: a date window arrives as ISO STRINGS. sweep_run must coerce
+    them to tz-aware datetimes before load_inputs binds them to asyncpg
+    timestamptz params — otherwise asyncpg raises 'expected datetime, got str'
+    and the sweep loads zero signals."""
+    from datetime import datetime, timezone
+
+    from backend.mcp.repositories.sweep_repo import SweepRepository
+
+    runner = _LoadInputsRunner()
+    repo = SweepRepository(mcp_pool)
+    ctx = _ctx(repo, runner)
+
+    r = await _call("sweep_run", {
+        "space": {"leverage": [5, 10]}, "objective": "total_return", "strategy": "grid",
+        "date_range_start": "2026-06-04T18:30:00Z", "date_range_end": "2026-06-13T03:00:00Z",
+        "starting_capital": 1000.0,
+    }, ctx)
+    assert r["isError"] is False, r
+
+    # load_inputs ran in the foreground (before the bg task), with coerced dates
+    assert runner.seen_dates, "load_inputs was never called"
+    start, end = runner.seen_dates[0]
+    assert isinstance(start, datetime) and isinstance(end, datetime)
+    assert start == datetime(2026, 6, 4, 18, 30, tzinfo=timezone.utc)
+    assert end == datetime(2026, 6, 13, 3, 0, tzinfo=timezone.utc)
+
+    # let the background task settle so it doesn't leak into other tests
+    sweep_id = r["structuredContent"]["sweep_id"]
+    task = ctx.services._state.mcp_sweep_tasks.get(sweep_id)
+    if task is not None:
+        await task
