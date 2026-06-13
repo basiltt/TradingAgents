@@ -198,6 +198,7 @@ export function ToggleNumberField({
                     min={min}
                     max={max}
                     step={step ?? "any"}
+                    aria-label={unit ? `${title} (${unit})` : title}
                     value={field.value == null ? "" : String(field.value)}
                     onChange={(e) => {
                       const v = e.target.value;

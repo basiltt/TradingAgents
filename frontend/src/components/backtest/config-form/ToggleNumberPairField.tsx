@@ -85,6 +85,8 @@ export function ToggleNumberPairField({
                           min={min}
                           max={max}
                           step="any"
+                          aria-label={unit ? `${title} (${unit})` : title}
+                          aria-describedby={error ? `${valueName}-error` : undefined}
                           value={valueField.value == null ? "" : String(valueField.value)}
                           onChange={(e) => {
                             const v = e.target.value;
@@ -96,7 +98,7 @@ export function ToggleNumberPairField({
                         />
                         {unit ? <span className="text-[0.72rem] text-[var(--neu-text-muted)]">{unit}</span> : null}
                       </div>
-                      {error ? <span className="text-[0.72rem] text-[var(--neu-danger)]">{error}</span> : null}
+                      {error ? <span id={`${valueName}-error`} className="text-[0.72rem] text-[var(--neu-danger)]">{error}</span> : null}
                     </div>
                   ) : null}
                 </div>

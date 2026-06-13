@@ -75,7 +75,7 @@ export function FiltersAdvancedTab({ control, fieldError, setValue }: FiltersAdv
         </div>
 
         {/* Cool Off Time — 2-column matrix of self-contained reveal-when-on cards. */}
-        <div className="mt-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--neu-text-muted)]">
+        <div className="mt-4 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-[var(--neu-text-muted)]">
           Cool Off Time
         </div>
         <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">

@@ -143,7 +143,7 @@ export function SetupTab({ control, fieldError, schedules, accounts, scanMode, r
               {(() => {
                 const acct = accounts.find((a) => a.id === replayAccountId);
                 return acct?.ai_manager_state != null ? (
-                  <span className="text-[0.72rem] text-[var(--neu-warning,#b45309)]">
+                  <span className="text-[0.72rem] text-[var(--neu-warning)]">
                     This account uses the AI Manager, which the backtest excludes — replay
                     fidelity is most meaningful for non-AI-Manager accounts.
                   </span>

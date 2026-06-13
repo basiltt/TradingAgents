@@ -27,6 +27,7 @@ import { StrategyTab } from "./config-form/StrategyTab";
 import { RiskExitsTab } from "./config-form/RiskExitsTab";
 import { FiltersAdvancedTab } from "./config-form/FiltersAdvancedTab";
 import { TAB_ORDER, TAB_LABELS, FIELD_PATHS_BY_TAB, type TabId } from "./config-form/tabMeta";
+import { errorMessageAt, hasErrorAt, collectErrors } from "./config-form/errorTree";
 import type { ScheduleOption } from "./config-form/tabProps";
 
 /* --------------------------------- error helpers --------------------------------- */
@@ -247,57 +248,18 @@ export function BacktestConfigForm({
   const formRef = React.useRef<HTMLFormElement>(null);
   const summaryRef = React.useRef<HTMLDivElement>(null);
 
-  const fieldError = (path: string): string | undefined => {
-    // errors is a nested object; support dotted paths for scan_source.* too.
-    const parts = path.split(".");
-    let node: unknown = errors;
-    for (const p of parts) {
-      if (node && typeof node === "object" && p in node) {
-        node = (node as Record<string, unknown>)[p];
-      } else {
-        return undefined;
-      }
-    }
-    if (node && typeof node === "object" && "message" in node) {
-      return String((node as { message?: unknown }).message ?? "");
-    }
-    return undefined;
-  };
-
-  // True if `path` OR any nested descendant under it has a validation message.
-  // Handles both leaf fields and subtrees (e.g. scan_source → scan_source.mode).
-  const fieldHasError = React.useCallback(
-    (path: string): boolean => {
-      const parts = path.split(".");
-      let node: unknown = errors;
-      for (const p of parts) {
-        if (node && typeof node === "object" && p in node) node = (node as Record<string, unknown>)[p];
-        else return false;
-      }
-      if (!node || typeof node !== "object") return false;
-      let found = false;
-      const visit = (n: unknown) => {
-        if (found || !n || typeof n !== "object") return;
-        if (typeof (n as { message?: unknown }).message === "string") {
-          found = true;
-          return;
-        }
-        for (const [k, v] of Object.entries(n as Record<string, unknown>)) {
-          if (k === "ref" || k === "types") continue;
-          visit(v);
-        }
-      };
-      visit(node);
-      return found;
-    },
+  // The leaf message at a field path (supports dotted scan_source.* paths). Memoized
+  // so the reference is stable across renders for the four tab components it's passed to.
+  const fieldError = React.useCallback(
+    (path: string): string | undefined => errorMessageAt(errors, path),
     [errors],
   );
 
   // Per-tab error count, derived from the field→tab map so badges and auto-switch
   // share one source of truth and cannot drift.
   const tabErrorCount = React.useCallback(
-    (id: TabId): number => FIELD_PATHS_BY_TAB[id].reduce((n, p) => n + (fieldHasError(p) ? 1 : 0), 0),
-    [fieldHasError],
+    (id: TabId): number => FIELD_PATHS_BY_TAB[id].reduce((n, p) => n + (hasErrorAt(errors, p) ? 1 : 0), 0),
+    [errors],
   );
 
   const submit = handleSubmit(
@@ -310,30 +272,9 @@ export function BacktestConfigForm({
       // (lifecycle order), THEN focus its first invalid control after the DOM updates.
       // Compute the target from the FRESH errors passed to this handler (the render-
       // scope `errors` can lag a tick behind on the first failed submit).
-      const errored = (id: TabId): boolean =>
-        FIELD_PATHS_BY_TAB[id].some((path) => {
-          const parts = path.split(".");
-          let node: unknown = submitErrors;
-          for (const p of parts) {
-            if (node && typeof node === "object" && p in node) node = (node as Record<string, unknown>)[p];
-            else return false;
-          }
-          let found = false;
-          const visit = (n: unknown) => {
-            if (found || !n || typeof n !== "object") return;
-            if (typeof (n as { message?: unknown }).message === "string") {
-              found = true;
-              return;
-            }
-            for (const [k, v] of Object.entries(n as Record<string, unknown>)) {
-              if (k === "ref" || k === "types") continue;
-              visit(v);
-            }
-          };
-          visit(node);
-          return found;
-        });
-      const target = TAB_ORDER.find(errored);
+      const target = TAB_ORDER.find((id) =>
+        FIELD_PATHS_BY_TAB[id].some((path) => hasErrorAt(submitErrors, path)),
+      );
       if (target) setActiveTab(target);
       requestAnimationFrame(() => {
         const el =
@@ -344,23 +285,13 @@ export function BacktestConfigForm({
     },
   );
 
-  const validationMessages = React.useMemo(() => {
-    const messages: string[] = [];
-    const visit = (node: unknown, path: string[] = []) => {
-      if (!node || typeof node !== "object") return;
-      const record = node as Record<string, unknown>;
-      if (typeof record.message === "string") {
-        messages.push(summarizeError(path.join("."), record.message));
-        return;
-      }
-      for (const [key, value] of Object.entries(record)) {
-        if (key === "ref" || key === "types") continue;
-        visit(value, [...path, key]);
-      }
-    };
-    visit(errors);
-    return Array.from(new Set(messages));
-  }, [errors]);
+  const validationMessages = React.useMemo(
+    () =>
+      Array.from(
+        new Set(collectErrors(errors).map(({ path, message }) => summarizeError(path, message))),
+      ),
+    [errors],
+  );
 
   return (
     <form ref={formRef} onSubmit={submit} className={cn("flex flex-col gap-4", className)} aria-label="Backtest configuration">
@@ -392,7 +323,7 @@ export function BacktestConfigForm({
       </div>
 
       <Tabs value={activeTab} onValueChange={(v) => handleTabChange(v as TabId)}>
-        <TabsList>
+        <TabsList className="max-w-full overflow-x-auto">
           {TAB_ORDER.map((id) => {
             const count = tabErrorCount(id);
             return (

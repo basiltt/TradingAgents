@@ -1,5 +1,5 @@
-import { Checkbox } from "@/components/ui/checkbox";
 import type { UseFormSetValue } from "react-hook-form";
+import { Checkbox } from "@/components/ui/checkbox";
 import type { BacktestConfigFormValues } from "../configSchema";
 import { CheckField, NumberField, SelectField, ToggleNumberField, Section, Hint, GRID } from "./fields";
 import type { TabProps } from "./tabProps";
