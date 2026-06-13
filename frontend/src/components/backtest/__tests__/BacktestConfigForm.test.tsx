@@ -555,4 +555,23 @@ describe("BacktestConfigForm", () => {
     expect(screen.getByRole("tab", { name: /strategy/i })).toHaveTextContent(/1/);
     expect(onSubmit).not.toHaveBeenCalled();
   });
+
+  it("submits the same payload regardless of which tab is active (keepMounted invariance)", async () => {
+    const onSubmit = vi.fn();
+    render(<BacktestConfigForm onSubmit={onSubmit} />);
+    // Enable a cool-off tier on the Filters tab (its minutes seeds to 60).
+    fireEvent.click(screen.getByText("Cool off after a win"));
+    // Switch back to Setup so a non-owning tab is active at submit time.
+    fireEvent.click(screen.getByRole("tab", { name: /setup/i }));
+    fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const req = onSubmit.mock.calls[0][0];
+    // The enabled tier + its seeded duration both made it into the payload.
+    expect(req.cooloff_on_success_enabled).toBe(true);
+    expect(req.cooloff_on_success_minutes).toBe(60);
+    // Untouched defaults are intact (proves no field was dropped by tab hiding).
+    expect(req.leverage).toBe(20);
+    expect(req.simulation_interval).toBe("5m");
+    expect(req.max_drawdown_pct).toBe(100);
+  });
 });

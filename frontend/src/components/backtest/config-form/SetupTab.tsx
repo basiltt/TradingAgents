@@ -9,7 +9,8 @@ interface SetupTabProps extends TabProps {
   schedules: ScheduleOption[];
   accounts: DashboardCard[];
   scanMode: string | undefined;
-  replayAccountId: string | undefined | null;
+  /** RHF types this discriminated-union path as `unknown`; compared as a string id. */
+  replayAccountId: unknown;
 }
 
 export function SetupTab({ control, fieldError, schedules, accounts, scanMode, replayAccountId }: SetupTabProps) {
