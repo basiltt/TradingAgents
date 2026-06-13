@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useState } from "react";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AutoTradeSection, DEFAULT_CONFIG } from "../AutoTradeSection";
 import { presetToAutoTradeConfig } from "../applyReferencePreset";
@@ -42,8 +42,6 @@ describe("AutoTradeSection — Apply preset buttons", () => {
   beforeEach(() => {
     localStorage.clear();
     vi.restoreAllMocks();
-    // jsdom does not implement window.confirm — provide a stub so it can be spied on.
-    vi.stubGlobal("confirm", vi.fn(() => true));
   });
 
   it("renders both preset buttons in the expanded card body", () => {
@@ -52,20 +50,21 @@ describe("AutoTradeSection — Apply preset buttons", () => {
     expect(screen.getByRole("button", { name: /Apply Optimized/i })).toBeInTheDocument();
   });
 
-  it("applies the Optimized preset to a pristine card without a confirm", () => {
+  it("applies the Optimized preset to a pristine card without a confirm dialog", () => {
     renderSection([pristineCard()]);
     // Pristine card shows the default Leverage chip first.
     expect(screen.getByText(`${DEFAULT_CONFIG.leverage}x`)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /Apply Optimized/i }));
 
-    // Optimized leverage is 7 → chip updates; no confirm on a pristine card.
-    expect(window.confirm).not.toHaveBeenCalled();
+    // Optimized leverage is 7 → chip updates; no confirm dialog on a pristine card.
+    expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.getByText("7x")).toBeInTheDocument();
   });
 
   it("preserves account_id and AI-Manager settings when applying a preset", () => {
     // Start from a card that has an account + AI on, but otherwise default trade fields.
+    // AI-Manager is a PROTECTED field, so cardHasEdits is false → applies directly.
     const card: AutoTradeConfig = {
       ...DEFAULT_CONFIG,
       account_id: "",
@@ -82,17 +81,35 @@ describe("AutoTradeSection — Apply preset buttons", () => {
     expect(presetToAutoTradeConfig("reference")).not.toHaveProperty("ai_manager_enabled");
   });
 
-  it("confirms before overwriting an edited card and respects cancel", () => {
-    // An edited card (non-default leverage) → applying triggers confirm.
+  it("opens an in-app confirm dialog for an edited card and respects Cancel", async () => {
+    // An edited card (non-default leverage) → applying opens the confirm dialog.
     const edited: AutoTradeConfig = { ...DEFAULT_CONFIG, account_id: "", leverage: 13 };
     renderSection([edited]);
-    vi.mocked(window.confirm).mockReturnValue(false);
 
     expect(screen.getByText("13x")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Apply Optimized/i }));
 
-    // Cancelled ⇒ confirm was asked, but leverage stays at the edited value.
-    expect(window.confirm).toHaveBeenCalledTimes(1);
+    // The styled dialog appears (not a native window.confirm).
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/Apply Optimized preset\?/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/AI-Manager settings are kept/i)).toBeInTheDocument();
+
+    // Cancel ⇒ nothing applied, leverage stays at the edited value, dialog closes.
+    fireEvent.click(within(dialog).getByRole("button", { name: /^Cancel$/i }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(screen.getByText("13x")).toBeInTheDocument();
+  });
+
+  it("applies the preset after confirming in the in-app dialog", async () => {
+    const edited: AutoTradeConfig = { ...DEFAULT_CONFIG, account_id: "", leverage: 13 };
+    renderSection([edited]);
+
+    fireEvent.click(screen.getByRole("button", { name: /Apply Optimized/i }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: /Apply preset/i }));
+
+    // Confirmed ⇒ Optimized leverage (7) applied, dialog closes.
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByText("7x")).toBeInTheDocument();
   });
 });

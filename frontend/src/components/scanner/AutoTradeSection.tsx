@@ -8,6 +8,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { clampNumber, clampNumberOrNull } from "@/lib/number";
 import { NeuSwitch } from "@/design-system/neumorphism";
@@ -312,26 +320,31 @@ interface CardProps {
 
 function AutoTradeCard({ config, index, accounts, accountsLoading, usedAccountIds, onChange, onDuplicate, onRemove }: CardProps) {
   const [expanded, setExpanded] = useState(!config.account_id);
+  // When set, an in-app confirm dialog asks before overwriting an edited card.
+  const [pendingPreset, setPendingPreset] = useState<ReferencePresetId | null>(null);
   const selectedAccount = accounts.find((a) => a.id === config.account_id);
   const leverageNum = config.leverage || 1;
   const capitalPctNum = config.capital_pct || 0;
   const tpPriceMove = (config.take_profit_pct / leverageNum).toFixed(2);
   const slPriceMove = (config.stop_loss_pct / leverageNum).toFixed(2);
 
-  // Prefill this account's trade/risk/strategy fields from a backtested preset. Skips a
-  // true no-op (no mappable field changes); otherwise confirms before overwriting an
-  // edited card. account_id + AI-Manager settings are preserved by the partial onChange.
+  // Prefill this account's trade/risk/strategy fields from a backtested preset.
+  // account_id + AI-Manager settings are preserved by the partial onChange.
+  // - true no-op (no mappable field changes) → do nothing.
+  // - edited card → open the in-app confirm dialog (pendingPreset).
+  // - pristine card → apply immediately.
   const applyPreset = (id: ReferencePresetId) => {
     if (!presetChangesCard(config, id)) return;
     if (cardHasEdits(config, DEFAULT_CONFIG)) {
-      const label = id === "optimized" ? "Optimized" : "Reference";
-      const ok = window.confirm(
-        `Replace this account's trade settings with the ${label} preset?\n\n` +
-          "Your selected account and AI-Manager settings are kept.",
-      );
-      if (!ok) return;
+      setPendingPreset(id);
+      return;
     }
     onChange(presetToAutoTradeConfig(id));
+  };
+
+  const confirmApplyPreset = () => {
+    if (pendingPreset) onChange(presetToAutoTradeConfig(pendingPreset));
+    setPendingPreset(null);
   };
 
   return (
@@ -915,6 +928,34 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, usedAccountId
         <RegimeStrategyFields config={config} onChange={onChange} />
         <CooloffFields config={config} onChange={onChange} />
       </div>
+
+      {/* In-app confirm (replaces native window.confirm) before overwriting an edited
+          card's trade settings with a backtested preset. */}
+      <Dialog open={pendingPreset !== null} onOpenChange={(o) => !o && setPendingPreset(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              Apply {pendingPreset === "optimized" ? "Optimized" : "Reference"} preset?
+            </DialogTitle>
+            <DialogDescription>
+              This replaces this account's trade, risk &amp; strategy settings with the{" "}
+              {pendingPreset === "optimized" ? "Optimized" : "Reference"} preset.
+            </DialogDescription>
+          </DialogHeader>
+          <p className="text-sm text-[var(--neu-text-muted)]">
+            Your selected account and AI-Manager settings are kept. You can still tweak any
+            field afterward.
+          </p>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setPendingPreset(null)} className="cursor-pointer">
+              Cancel
+            </Button>
+            <Button type="button" onClick={confirmApplyPreset} className="cursor-pointer">
+              Apply preset
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </article>
   );
 }
