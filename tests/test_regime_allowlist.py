@@ -30,9 +30,11 @@ def test_pm_keeps_regime_context():
     assert out.get("regime_context") == "REGIME-X"
 
 
-def test_technical_analyst_keeps_regime_context():
+def test_technical_analyst_strips_regime_context():
+    # Regime context is injected at the PM only (the decision-maker); the
+    # technical analyst is NOT allowlisted, so the barrier strips it.
     out = filter_state_for_read(_state(), "technical_analyst")
-    assert out.get("regime_context") == "REGIME-X"
+    assert "regime_context" not in out
 
 
 def test_news_analyst_strips_regime_context():

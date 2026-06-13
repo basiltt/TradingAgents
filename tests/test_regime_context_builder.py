@@ -91,9 +91,39 @@ def test_direction_falling():
     assert "falling" in out.lower() and "short" in out.lower()
 
 
-def test_direction_flat():
-    out = rc.build_regime_context_block(0.3, 0.3, None)
-    assert "flat" in out.lower()
+def test_direction_flat_is_suppressed():
+    # A genuinely directionless market emits NO BTC line (and no block at all
+    # when there's no skew) — "flat / no edge" noise is deliberately suppressed.
+    out = rc.build_regime_context_block(0.3, 0.5, None)
+    assert out == ""
+
+
+def test_direction_post_rally_consolidation_reads_rising():
+    # The key fix: price rallied (+10% session move) but now sits near its EMA
+    # (small distance). EMA-distance alone would call this "flat"; the session
+    # move makes it correctly "rising" — exactly when blind shorts are dangerous.
+    out = rc.build_regime_context_block(0.3, 10.5, None)
+    assert "rising" in out.lower()
+
+
+def test_direction_conflicting_signals_suppressed():
+    # EMA up but session down (post-crash bounce) → ambiguous → no line.
+    out = rc.build_regime_context_block(5.8, -3.0, None)
+    assert out == ""
+
+
+def test_move_threshold_requires_meaningful_move():
+    # +1% net session move is noise (below the 3% move bar) and EMA is flat →
+    # suppressed, not "rising".
+    out = rc.build_regime_context_block(0.4, 1.0, None)
+    assert out == ""
+
+
+def test_move_pct_display_clamped():
+    # A garbage-large move must never render an absurd percentage.
+    out = rc.build_regime_context_block(5.0, 999999.0, None)
+    assert "999999" not in out
+    assert "+100.0%" in out
 
 
 # ── T1.4 skew line ──

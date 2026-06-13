@@ -27,7 +27,7 @@ class ReportKeys:
 READABLE_KEYS: dict[str, list[str]] = {
     "technical_analyst": [
         "messages", "trade_date", "company_of_interest",
-        "crypto_interval", "current_price_context", "regime_context",
+        "crypto_interval", "current_price_context",
     ],
     "derivatives_analyst": [
         "messages", "trade_date", "company_of_interest",

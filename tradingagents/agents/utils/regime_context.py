@@ -21,9 +21,13 @@ from typing import Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
 
-# Direction threshold (percent EMA-distance). Matches the existing
-# ``regime_trend_ema_dist_pct`` default so the two regime notions stay aligned.
-REGIME_TREND_THRESH_PCT = 1.0
+# Direction thresholds (percent). EMA distance and net session move live on
+# different scales, so each gets its own bar (see _direction_label). The EMA
+# threshold echoes the execution-side ``regime_trend_ema_dist_pct`` default but
+# is intentionally NOT coupled to it (this is account-agnostic prompt context,
+# not a per-account execution gate).
+REGIME_TREND_THRESH_PCT = 1.0   # EMA-distance bar
+REGIME_MOVE_THRESH_PCT = 3.0    # net first→last session-move bar (~38h window)
 # Minimum recent-signal sample before a skew line is emitted (avoids noise).
 REGIME_SKEW_MIN_SAMPLE = 20
 # Book is considered "one-sided" toward shorts at/above this percentage.
@@ -98,15 +102,47 @@ def closes_from_kline_csv(csv_text: str) -> list:
 
 
 
-def _direction_label(trend_pct: Optional[float], thresh: float) -> Optional[str]:
-    """Map a signed trend percentage to a human label, or None if unknown."""
-    if trend_pct is None:
-        return None
-    if trend_pct >= thresh:
+def _direction_label(
+    trend_pct: Optional[float],
+    move_pct: Optional[float],
+    trend_thresh: float,
+    move_thresh: float,
+) -> Optional[str]:
+    """Classify BTC direction from BOTH the session move and the EMA distance.
+
+    The two inputs live on different scales, so each has its own threshold:
+      - trend_pct (EMA distance): price persistently above/below its average; a
+        ~1% distance is already meaningful.
+      - move_pct (net first→last over ~38h): needs a larger move (~3%) to count,
+        since small net travel over many hours is noise.
+
+    Using EMA distance ALONE misses a key case: a market that rallied and is now
+    consolidating near its (now-elevated) EMA reads ~0 distance ("flat") even
+    though it is clearly up on the session — exactly when blind shorts are most
+    dangerous. So direction is "rising" if EITHER signal clears its UP threshold
+    (and neither clears its DOWN threshold), and "falling" symmetrically. When
+    neither is decisive we return None so NO line is injected (a "flat / no edge"
+    line is pure noise on every prompt and is deliberately suppressed).
+    """
+    up = down = False
+    if trend_pct is not None:
+        up = up or trend_pct >= trend_thresh
+        down = down or trend_pct <= -trend_thresh
+    if move_pct is not None:
+        up = up or move_pct >= move_thresh
+        down = down or move_pct <= -move_thresh
+    if up and not down:
         return "rising"
-    if trend_pct <= -thresh:
+    if down and not up:
         return "falling"
-    return "flat"
+    return None  # directionless or conflicting → suppress
+
+
+def _clamp_move(move_pct: Optional[float]) -> Optional[float]:
+    """Bound the displayed move so a garbage close can never render an absurd %."""
+    if move_pct is None:
+        return None
+    return max(-100.0, min(100.0, move_pct))
 
 
 def build_regime_context_block(
@@ -115,14 +151,16 @@ def build_regime_context_block(
     signal_skew: Optional[dict],
     *,
     trend_thresh: float = REGIME_TREND_THRESH_PCT,
+    move_thresh: float = REGIME_MOVE_THRESH_PCT,
     min_sample: int = REGIME_SKEW_MIN_SAMPLE,
 ) -> str:
     """Build the account-agnostic regime-context block (FR-1).
 
     Returns "" when neither a BTC direction nor a sufficient skew sample is
-    available, so concatenating it into a prompt is always safe.
+    available, so concatenating it into a prompt is always safe. A genuinely
+    directionless ("flat") market produces NO BTC line (noise suppression).
     """
-    direction = _direction_label(btc_trend_pct, trend_thresh)
+    direction = _direction_label(btc_trend_pct, btc_move_pct, trend_thresh, move_thresh)
 
     skew_ok = bool(
         signal_skew and int(signal_skew.get("sample_n", 0) or 0) >= min_sample
@@ -133,27 +171,19 @@ def build_regime_context_block(
 
     lines = ["--- MARKET REGIME CONTEXT (account-agnostic) ---"]
 
-    # BTC trend line
+    # BTC trend line (omitted entirely when direction is None — no "flat" noise).
     if direction is not None:
-        move_txt = (
-            f" ({btc_move_pct:+.1f}% over the recent session)"
-            if btc_move_pct is not None
-            else ""
-        )
+        clamped = _clamp_move(btc_move_pct)
+        move_txt = f" ({clamped:+.1f}% recent session)" if clamped is not None else ""
         if direction == "rising":
             lines.append(
-                f"BTC is {direction}{move_txt}; breadth favors LONGS. "
-                f"Counter-trend shorts carry elevated squeeze risk."
+                f"BTC is rising{move_txt}; broad market tilts LONG. "
+                f"Counter-trend shorts face elevated squeeze risk — weigh that against the setup."
             )
-        elif direction == "falling":
+        else:  # falling
             lines.append(
-                f"BTC is {direction}{move_txt}; breadth favors SHORTS. "
-                f"Trend-aligned shorts are with the dominant flow."
-            )
-        else:
-            lines.append(
-                f"BTC is {direction}{move_txt}; no clear directional edge. "
-                f"Be selective and demand setup-specific evidence."
+                f"BTC is falling{move_txt}; broad market tilts SHORT. "
+                f"Trend-aligned shorts are with the dominant flow; counter-trend longs face added risk."
             )
 
     # Portfolio skew line
@@ -167,13 +197,13 @@ def build_regime_context_block(
         )
         if short_pct >= REGIME_ONE_SIDED_PCT:
             lines.append(
-                "The book is one-sided toward SHORTS - demand a higher bar "
-                "for another SHORT unless this setup is exceptional."
+                "The book is heavily one-sided toward SHORTS; judge this trade on "
+                "its own merits rather than adding to an already crowded direction."
             )
         elif long_pct >= REGIME_ONE_SIDED_PCT:
             lines.append(
-                "The book is one-sided toward LONGS - demand a higher bar "
-                "for another LONG unless this setup is exceptional."
+                "The book is heavily one-sided toward LONGS; judge this trade on "
+                "its own merits rather than adding to an already crowded direction."
             )
 
     # Cross-signal conflict warning: rising tape + short-heavy book
