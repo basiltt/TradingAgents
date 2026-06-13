@@ -706,6 +706,7 @@ class AnalysisService:
             past_context=past_context,
             asset_type=config.get("asset_type", "stock"),
             crypto_interval=config.get("crypto_interval"),
+            regime_context=request.get("regime_context", "") or "",
         )
 
         # For crypto: fetch live price + lower-timeframe candles so all agents
