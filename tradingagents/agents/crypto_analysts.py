@@ -113,7 +113,7 @@ def create_crypto_technical_analyst(llm, crypto_tools: list):
             " Write a detailed report with a Markdown summary table at the end."
             + htf_instruction
             + (
-                f"\n\n--- MARKET REGIME CONTEXT ---\n{regime_ctx}\n"
+                f"\n\n{regime_ctx}\n"
                 if regime_ctx else ""
             )
             + get_language_instruction()
@@ -1032,6 +1032,10 @@ def create_crypto_portfolio_manager(llm, max_leverage: int = 20):
         crypto_interval = filtered.get("crypto_interval")
         instrument_context = build_instrument_context(company, crypto_interval)
         price_context = wrap_external_data(filtered.get("current_price_context", ""), "exchange_ticker")
+        # Regime-context injection (FR-4): account-agnostic block, empty-guarded so
+        # an absent/"" value leaves the prompt byte-identical to the legacy prompt.
+        regime_ctx = (filtered.get("regime_context", "") or "").strip()
+        regime_block = f"{regime_ctx}\n\n" if regime_ctx else ""
         risk_debate_state = filtered.get("risk_debate_state", {})
         history = _truncate_history(risk_debate_state.get("history", ""))
         research_plan = wrap_external_data(filtered.get("investment_plan", ""), "research_manager")
@@ -1054,6 +1058,7 @@ def create_crypto_portfolio_manager(llm, max_leverage: int = 20):
             f"data-fetching function. Base your decision solely on the data provided below.\n\n"
             f"{instrument_context}\n\n"
             f"CURRENT PRICE DATA (use as reference for entry/SL/TP levels):\n{price_context}\n\n"
+            f"{regime_block}"
             f"Max allowed leverage: {max_leverage}x\n\n"
             f"**Rating Scale** (for the structured rating field):\n"
             f"- **Buy**: Strong conviction to go LONG — price will rise significantly\n"
