@@ -418,7 +418,7 @@ export function BacktestConfigForm({
         </TabsContent>
       </Tabs>
 
-      <div className="flex flex-wrap items-center justify-end gap-3">
+      <div className="sticky bottom-0 z-10 -mx-1 mt-2 flex flex-wrap items-center justify-end gap-3 border-t border-[color:var(--neu-stroke-soft)]/50 bg-[var(--neu-surface-base)]/95 px-1 py-3 backdrop-blur supports-[backdrop-filter]:bg-[var(--neu-surface-base)]/80">
         <Button type="button" variant="outline" onClick={resetForm} disabled={isSubmitting}>
           Reset
         </Button>
