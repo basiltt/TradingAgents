@@ -296,14 +296,22 @@ React.useEffect(() => {
   }
   prevStatus.current = scan?.status;
 }, [scan?.status, setResultsTab]);
-// Reset the one-shot guard when a NEW scan begins (activeScanId changes), so the
-// next scan's completion auto-switches again.
-React.useEffect(() => { didAutoSwitch.current = false; }, [activeScanId]);
+// Reset when a NEW scan begins (activeScanId changes): re-arm the one-shot guard
+// AND snap back to Progress, so the previous scan's persisted "results" can't strand
+// the user on an empty Results panel while the new scan runs. Guarded on a real
+// activeScanId so it never fires a mount-time write (no scan ⇒ no-op).
+React.useEffect(() => {
+  didAutoSwitch.current = false;
+  if (activeScanId) setResultsTab("progress");
+}, [activeScanId, setResultsTab]);
 ```
 
 - It fires **once** (guarded by `didAutoSwitch`), only on the running→completed
   transition; subsequent re-renders do not re-switch.
-- The `activeScanId`-keyed effect resets the guard so each new scan re-arms it.
+- The `activeScanId`-keyed effect resets the guard **and** snaps the view back to
+  Progress so each new scan re-arms cleanly and starts on the live Progress view
+  (the documented "while running" default), regardless of where the previous scan
+  left the persisted tab.
 - The auto-switch persists (`setResultsTab` writes localStorage), which is the
   intended "remember Results after completion" behavior; the user can still click
   back to Progress afterward and that choice persists.

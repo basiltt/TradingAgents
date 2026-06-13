@@ -509,7 +509,14 @@ export function ScannerPage() {
     }
     prevScanStatus.current = scan?.status;
   }, [scan?.status, setResultsTab]);
-  useEffect(() => { didAutoSwitch.current = false; }, [activeScanId]);
+  // On a NEW scan: re-arm the one-shot guard AND snap back to Progress (the default
+  // "while running" view), so a stale "results" left persisted by the PREVIOUS scan's
+  // auto-switch can't strand the user on an empty Results panel. Guarded on a real
+  // activeScanId so this never fires a mount-time localStorage write (no scan ⇒ no-op).
+  useEffect(() => {
+    didAutoSwitch.current = false;
+    if (activeScanId) setResultsTab("progress");
+  }, [activeScanId, setResultsTab]);
 
   useEffect(() => {
     if (scan?.status === "cancelled" && scan.results.length === 0) {
@@ -651,7 +658,7 @@ export function ScannerPage() {
             </div>
           )}
           <Tabs value={configTab} onValueChange={(v) => setConfigTab(v as typeof configTab)}>
-            <TabsList>
+            <TabsList className="max-w-full overflow-x-auto">
               {SCANNER_CONFIG_TABS.map((id) => (
                 <TabsTrigger key={id} value={id}>{SCANNER_CONFIG_LABELS[id]}</TabsTrigger>
               ))}
@@ -1092,15 +1099,9 @@ export function ScannerPage() {
       {/* Progress + Results + Config (tabbed once a scan is active) */}
       {scan && scan.status !== "cancelled" && (
         <Tabs value={resultsTab} onValueChange={(v) => setResultsTab(v as typeof resultsTab)}>
-          <TabsList>
-            {SCANNER_RESULT_TABS.map((id) => (
-              <TabsTrigger key={id} value={id}>{SCANNER_RESULT_LABELS[id]}</TabsTrigger>
-            ))}
-          </TabsList>
-
-          <TabsContent value="progress" keepMounted>
-        <div className={cn(SCANNER_PANEL_CLASS, "p-5 space-y-5")}>
-          <div className="space-y-5">
+          {/* Status header + Cancel sit ABOVE the tabs so they stay reachable from
+              every result tab (Cancel must not be trapped inside an inactive panel). */}
+          <div className={cn(SCANNER_PANEL_CLASS, "p-5")}>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 {isRunning && (
@@ -1145,6 +1146,17 @@ export function ScannerPage() {
                 </Button>
               ) : null}
             </div>
+          </div>
+
+          <TabsList className="max-w-full overflow-x-auto">
+            {SCANNER_RESULT_TABS.map((id) => (
+              <TabsTrigger key={id} value={id}>{SCANNER_RESULT_LABELS[id]}</TabsTrigger>
+            ))}
+          </TabsList>
+
+          <TabsContent value="progress" keepMounted>
+        <div className={cn(SCANNER_PANEL_CLASS, "p-5 space-y-5")}>
+          <div className="space-y-5">
 
             {/* Progress bar */}
             <div className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-lg)] border-none shadow-[var(--shadow-card)] px-4 py-4">

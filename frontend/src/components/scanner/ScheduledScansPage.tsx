@@ -1123,9 +1123,17 @@ function ScheduleFormDialog({
         <form onSubmit={handleSubmit} className="space-y-5">
           <button type="submit" hidden aria-hidden="true" tabIndex={-1} />
           <Tabs value={dialogTab} onValueChange={(v) => setDialogTab(v as typeof dialogTab)}>
-            <TabsList>
+            <TabsList className="max-w-full overflow-x-auto">
               {SCHEDULED_TABS.map((id) => (
-                <TabsTrigger key={id} value={id}>{SCHEDULED_LABELS[id]}</TabsTrigger>
+                <TabsTrigger key={id} value={id} className="gap-1.5">
+                  {SCHEDULED_LABELS[id]}
+                  {id === "autotrade" && !cooloffGateValid(autoTradeConfigs) ? (
+                    <span
+                      aria-label="needs attention"
+                      className="inline-flex size-1.5 rounded-full bg-[var(--neu-danger)]"
+                    />
+                  ) : null}
+                </TabsTrigger>
               ))}
             </TabsList>
 
@@ -1504,7 +1512,7 @@ function ScheduleFormDialog({
               className="mt-1 text-right text-[0.72rem] font-medium text-[var(--neu-danger)]"
               data-testid="cooloff-save-hint"
             >
-              Set a valid cool-off duration (1–43200 min) for each enabled tier to save.
+              Set a valid cool-off duration (1–43200 min) for each enabled tier on the Auto-trade tab to save.
             </p>
           )}
         </form>
