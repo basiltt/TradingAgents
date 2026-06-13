@@ -29,6 +29,9 @@ import { AutoTradeSection } from "@/components/scanner/AutoTradeSection";
 import { cooloffGateValid, collectCooloffGateErrors } from "@/components/scanner/cooloffValidation";
 import { allCapabilitiesOn } from "@/components/scanner/aiManagerCapabilities";
 import { NeuSwitch } from "@/design-system/neumorphism";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { SCHEDULED_TABS, SCHEDULED_LABELS } from "@/components/scanner/form-tabs/scanTabs";
+import { useTabPersistence } from "@/components/scanner/form-tabs/useTabPersistence";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -805,7 +808,9 @@ function ScheduleFormDialog({
   const [cronExpression, setCronExpression] = useState(() => formDefaults.cronExpression ?? "0 9 * * *");
   const [timezone, setTimezone] = useState(() => formDefaults.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone);
   const [submitting, setSubmitting] = useState(false);
-  const [showScanConfig, setShowScanConfig] = useState(false);
+  const [dialogTab, setDialogTab] = useTabPersistence(
+    "tradingagents_scheduled_form_tab", SCHEDULED_TABS,
+  );
 
   const [saved] = useState(loadSavedSettings);
   const [provider, setProvider] = useState(() => formDefaults.provider ?? saved.provider ?? "anthropic");
@@ -832,8 +837,6 @@ function ScheduleFormDialog({
   const [autoTradeConfigs, setAutoTradeConfigs] = useState<import("@/api/client").AutoTradeConfig[]>(() => {
     try { return JSON.parse(localStorage.getItem("tradingagents_auto_trade_configs") ?? "[]"); } catch { return []; }
   });
-  const [showWorkflowSettings, setShowWorkflowSettings] = useState(false);
-  const [showLlmSettings, setShowLlmSettings] = useState(false);
 
   const [endpoints, setEndpoints] = useState(loadEndpoints);
   const [showEndpoints, setShowEndpoints] = useState(false);
@@ -999,10 +1002,19 @@ function ScheduleFormDialog({
       setLlmMaxConcurrent(fd.llmMaxConcurrent ?? 0); setLlmMinSpacingMs(fd.llmMinSpacingMs ?? 0);
       setAgentModelOverrides(loadOverrides());
       setAutoTradeConfigs(fd.autoTradeConfigs ?? []);
-      setShowScanConfig(false); setShowWorkflowSettings(false); setShowLlmSettings(false); setShowEndpoints(false);
+      setShowEndpoints(false);
     }
     onOpenChange(v);
   }
+
+  // The dialog stays mounted, so the tab persists across opens via React state and
+  // across reloads via localStorage. Opening to CREATE a new schedule (editingId ==
+  // null) forces the Schedule tab so the name/type are set first; opening to edit
+  // leaves the remembered tab. setDialogTab persists, which is intended.
+  useEffect(() => {
+    if (open && editingId == null) setDialogTab("schedule");
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fire on open/editingId edges only
+  }, [open, editingId]);
 
   function buildConfig(): ScheduleConfig {
     switch (scheduleType) {
@@ -1110,6 +1122,14 @@ function ScheduleFormDialog({
         ) : (
         <form onSubmit={handleSubmit} className="space-y-5">
           <button type="submit" hidden aria-hidden="true" tabIndex={-1} />
+          <Tabs value={dialogTab} onValueChange={(v) => setDialogTab(v as typeof dialogTab)}>
+            <TabsList>
+              {SCHEDULED_TABS.map((id) => (
+                <TabsTrigger key={id} value={id}>{SCHEDULED_LABELS[id]}</TabsTrigger>
+              ))}
+            </TabsList>
+
+            <TabsContent value="schedule" keepMounted>
           <div>
             <Label htmlFor="schedule-name" className="text-xs font-medium">Schedule Name</Label>
             <Input id="schedule-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="My daily scan" maxLength={255} className="mt-1.5" />
@@ -1210,9 +1230,9 @@ function ScheduleFormDialog({
             <Label htmlFor="timezone" className="text-xs font-medium">Timezone</Label>
             <Input id="timezone" value={timezone} onChange={(e) => setTimezone(e.target.value)} placeholder="America/New_York" className="mt-1.5" />
           </div>
+            </TabsContent>
 
-          {/* Scan Configuration (collapsible) */}
-          <CollapsibleSection title="Scan Configuration" open={showScanConfig} onToggle={() => setShowScanConfig(!showScanConfig)}>
+            <TabsContent value="scan" keepMounted>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="flex flex-col gap-1.5">
                 <Label className="text-xs font-semibold text-[var(--neu-text-muted)] uppercase tracking-wider">LLM Provider</Label>
@@ -1226,13 +1246,6 @@ function ScheduleFormDialog({
                 <Select value={klineInterval} onValueChange={(v) => setKlineInterval(v as CryptoInterval)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>{CRYPTO_INTERVALS.map((i) => (<SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>))}</SelectContent>
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label className="text-xs font-semibold text-[var(--neu-text-muted)] uppercase tracking-wider">Output Language</Label>
-                <Select value={outputLanguage} onValueChange={(v) => v != null && setOutputLanguage(v)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>{LANGUAGES.map((l) => (<SelectItem key={l} value={l}>{l}</SelectItem>))}</SelectContent>
                 </Select>
               </div>
             </div>
@@ -1308,10 +1321,16 @@ function ScheduleFormDialog({
                 })}
               </div>
             </div>
-          </CollapsibleSection>
+            </TabsContent>
 
-          {/* Workflow Settings (collapsible) */}
-          <CollapsibleSection title="Workflow Settings" open={showWorkflowSettings} onToggle={() => setShowWorkflowSettings(!showWorkflowSettings)}>
+            <TabsContent value="analysis" keepMounted>
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-semibold text-[var(--neu-text-muted)] uppercase tracking-wider">Output Language</Label>
+              <Select value={outputLanguage} onValueChange={(v) => v != null && setOutputLanguage(v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>{LANGUAGES.map((l) => (<SelectItem key={l} value={l}>{l}</SelectItem>))}</SelectContent>
+              </Select>
+            </div>
             <div className="rounded-[var(--neu-radius-md)] bg-[var(--neu-surface-muted)] shadow-[var(--neu-shadow-inset)] p-4 border-none flex flex-col gap-2">
               <Label className="text-xs font-semibold text-[var(--neu-text-muted)] uppercase tracking-wider">Research Depth</Label>
               <div className="flex items-center gap-3">
@@ -1364,10 +1383,11 @@ function ScheduleFormDialog({
               description="Cache the stable system prompt prefix on Anthropic models to cut token cost and latency."
               className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-md)] border-none shadow-[var(--shadow-card)] px-3.5 py-3.5"
             />
-          </CollapsibleSection>
 
-          {/* LLM & Proxy Settings (collapsible) */}
-          <CollapsibleSection title="LLM & Proxy Settings" open={showLlmSettings} onToggle={() => setShowLlmSettings(!showLlmSettings)}>
+            <AgentModelOverrides assetType="crypto" modelOptions={deepOptions} overrides={agentModelOverrides} onChange={setAgentModelOverrides} />
+            </TabsContent>
+
+            <TabsContent value="models" keepMounted>
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center justify-between">
                 <Label className="text-xs font-medium">Backend URL / Proxy Endpoint</Label>
@@ -1466,13 +1486,12 @@ function ScheduleFormDialog({
                 <p className="text-[11px] text-muted-foreground">0 = no delay</p>
               </div>
             </div>
-          </CollapsibleSection>
+            </TabsContent>
 
-          {/* Agent Model Overrides */}
-          <AgentModelOverrides assetType="crypto" modelOptions={deepOptions} overrides={agentModelOverrides} onChange={setAgentModelOverrides} />
-
-          {/* Auto-Trade */}
-          <AutoTradeSection value={autoTradeConfigs} onChange={setAutoTradeConfigs} />
+            <TabsContent value="autotrade" keepMounted>
+              <AutoTradeSection value={autoTradeConfigs} onChange={setAutoTradeConfigs} />
+            </TabsContent>
+          </Tabs>
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => handleOpenChange(false)}>Cancel</Button>
@@ -1495,20 +1514,3 @@ function ScheduleFormDialog({
   );
 }
 
-function CollapsibleSection({ title, open, onToggle, children }: { title: string; open: boolean; onToggle: () => void; children: React.ReactNode }) {
-  return (
-    <div className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-lg)] border-none shadow-[var(--shadow-card)] overflow-hidden">
-      <button
-        type="button"
-        onClick={onToggle}
-        className="flex items-center gap-2 text-sm font-semibold text-[var(--neu-text-muted)] hover:text-[var(--neu-text-strong)] hover:bg-[color-mix(in_oklch,var(--neu-accent)_4%,var(--neu-surface-base))] transition-colors w-full px-4 py-3 cursor-pointer"
-      >
-        <svg className={cn("w-4 h-4 transition-transform duration-200", open && "rotate-90")} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-        </svg>
-        {title}
-      </button>
-      {open && <div className="px-4 pb-4 space-y-3 border-t border-[color:var(--neu-stroke-soft)] pt-3 bg-[var(--neu-surface-base)]">{children}</div>}
-    </div>
-  );
-}
