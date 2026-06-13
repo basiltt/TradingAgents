@@ -510,6 +510,55 @@ describe("BacktestConfigForm", () => {
     );
   });
 
+  it("opening with a seed does NOT overwrite the user's saved draft on mount", async () => {
+    // A user builds a draft (auto-saved) then leaves without submitting.
+    const { unmount } = render(<BacktestConfigForm onSubmit={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("Initial Balance ($)"), { target: { value: "73210" } });
+    await waitFor(() =>
+      expect(JSON.parse(localStorage.getItem("tradingagents_backtest_draft") ?? "{}").starting_capital).toBe("73210"),
+    );
+    unmount();
+    // They open a "Backtest these settings" seed. The mount must NOT clobber the draft.
+    const seeded = render(<BacktestConfigForm onSubmit={vi.fn()} seed={{ starting_capital: 25000 }} />);
+    // Draft still holds the user's value, not the seed (regression guard for the
+    // former mount-time tab-persist effect that overwrote it).
+    expect(JSON.parse(localStorage.getItem("tradingagents_backtest_draft") ?? "{}").starting_capital).toBe("73210");
+    seeded.unmount();
+    // Reopening with no seed restores the user's draft, proving it survived.
+    render(<BacktestConfigForm onSubmit={vi.fn()} />);
+    await waitFor(() =>
+      expect((screen.getByLabelText("Initial Balance ($)") as HTMLInputElement).value).toBe("73210"),
+    );
+  });
+
+  it("disabling a cool-off tier submits null minutes (no phantom seeded value)", async () => {
+    const onSubmit = vi.fn();
+    render(<BacktestConfigForm onSubmit={onSubmit} />);
+    // Enable (seeds 60) then disable the same tier.
+    fireEvent.click(screen.getByText("Cool off after a win"));
+    fireEvent.click(screen.getByText("Cool off after a win"));
+    fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const req = onSubmit.mock.calls[0][0];
+    expect(req.cooloff_on_success_enabled).toBe(false);
+    expect(req.cooloff_on_success_minutes).toBeNull();
+  });
+
+  it("disabling adaptive blacklist resets its fields so an invalid value can't soft-lock submit", async () => {
+    const onSubmit = vi.fn();
+    render(<BacktestConfigForm onSubmit={onSubmit} />);
+    // Enable, type an out-of-range value (min is 1), then disable — the field hides.
+    fireEvent.click(screen.getByText("Enable adaptive blacklist"));
+    fireEvent.change(screen.getByLabelText("Min trades"), { target: { value: "0" } });
+    fireEvent.click(screen.getByText("Enable adaptive blacklist"));
+    // The disabled group's field was reset to its default, so submit is not blocked.
+    fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const req = onSubmit.mock.calls[0][0];
+    expect(req.adaptive_blacklist_enabled).toBe(false);
+    expect(req.adaptive_blacklist_min_trades).toBe(5);
+  });
+
   it("renders four lifecycle tabs and defaults to Setup", () => {
     render(<BacktestConfigForm onSubmit={vi.fn()} />);
     expect(screen.getByRole("tab", { name: /setup/i })).toHaveAttribute("data-active");

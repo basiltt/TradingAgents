@@ -193,11 +193,18 @@ export function BacktestConfigForm({
     return () => sub.unsubscribe();
   }, [getValues, watch]);
 
-  // Persist the active tab whenever it changes (merging into the field snapshot so
-  // switching tabs doesn't drop in-progress field values).
-  React.useEffect(() => {
-    saveDraft({ ...(getValues() as BacktestDraft), active_tab: activeTab });
-  }, [activeTab, getValues]);
+  // Switch tabs AND persist the choice. This is interaction-driven (only fires when
+  // the user clicks a tab), mirroring the watch() field-persistence above — so it
+  // never runs on mount. A mount-time write would clobber an existing draft when the
+  // form is opened with a `seed` (which intentionally ignores the draft) and would
+  // persist a defaults snapshot before the user has touched anything.
+  const handleTabChange = React.useCallback(
+    (next: TabId) => {
+      setActiveTab(next);
+      saveDraft({ ...(getValues() as BacktestDraft), active_tab: next });
+    },
+    [getValues],
+  );
 
   const applyDadDemoReference = React.useCallback(() => {
     const storedReference = loadReferenceConfig();
@@ -384,7 +391,7 @@ export function BacktestConfigForm({
         </p>
       </div>
 
-      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabId)}>
+      <Tabs value={activeTab} onValueChange={(v) => handleTabChange(v as TabId)}>
         <TabsList>
           {TAB_ORDER.map((id) => {
             const count = tabErrorCount(id);
@@ -414,7 +421,7 @@ export function BacktestConfigForm({
           <RiskExitsTab control={control} fieldError={fieldError} durationLimitsOn={durationLimitsOn} setValue={setValue} />
         </TabsContent>
         <TabsContent value="filters" keepMounted>
-          <FiltersAdvancedTab control={control} fieldError={fieldError} />
+          <FiltersAdvancedTab control={control} fieldError={fieldError} setValue={setValue} />
         </TabsContent>
       </Tabs>
 

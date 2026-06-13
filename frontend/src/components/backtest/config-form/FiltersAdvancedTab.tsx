@@ -1,10 +1,15 @@
-import { Controller } from "react-hook-form";
+import { Controller, type UseFormSetValue } from "react-hook-form";
 import { Checkbox } from "@/components/ui/checkbox";
+import type { BacktestConfigFormValues } from "../configSchema";
 import { NumberField, SymbolListField, Section, Hint, GRID } from "./fields";
 import { ToggleNumberPairField } from "./ToggleNumberPairField";
 import type { TabProps } from "./tabProps";
 
-export function FiltersAdvancedTab({ control, fieldError }: TabProps) {
+interface FiltersAdvancedTabProps extends TabProps {
+  setValue: UseFormSetValue<BacktestConfigFormValues>;
+}
+
+export function FiltersAdvancedTab({ control, fieldError, setValue }: FiltersAdvancedTabProps) {
   return (
     <div className="flex flex-col gap-4">
       <Section title="Symbol Filters">
@@ -33,7 +38,24 @@ export function FiltersAdvancedTab({ control, fieldError }: TabProps) {
               return (
                 <>
                   <label className="flex cursor-pointer items-start gap-2.5 text-[0.85rem] text-[var(--neu-text-strong)]">
-                    <Checkbox checked={on} onCheckedChange={(c) => field.onChange(c === true)} className="mt-0.5" />
+                    <Checkbox
+                      checked={on}
+                      onCheckedChange={(c) => {
+                        const next = c === true;
+                        field.onChange(next);
+                        // On disable, reset the (now-hidden) dependent fields to their
+                        // valid schema defaults. They are non-nullable and ignored by the
+                        // engine when disabled, so this changes no backtest behavior — but
+                        // it prevents a soft-lock where an invalid value typed while enabled
+                        // would block submit from a field that is no longer in the DOM.
+                        if (!next) {
+                          setValue("adaptive_blacklist_min_trades", 5, { shouldValidate: true });
+                          setValue("adaptive_blacklist_max_win_rate", 30, { shouldValidate: true });
+                          setValue("adaptive_blacklist_lookback_hours", 48, { shouldValidate: true });
+                        }
+                      }}
+                      className="mt-0.5"
+                    />
                     <span className="flex flex-col">
                       Enable adaptive blacklist
                       <Hint text="Engine-level · auto-skip symbols whose recent win rate is poor" />

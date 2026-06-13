@@ -57,9 +57,17 @@ export function ToggleNumberPairField({
                       onCheckedChange={(checked) => {
                         const on = checked === true;
                         enabledField.onChange(on);
-                        // Seed a default so the schema's "enabled ⇒ minutes != null" holds.
-                        if (on && (valueField.value == null || valueField.value === "")) {
-                          valueField.onChange(enabledValue);
+                        if (on) {
+                          // Seed a default so the schema's "enabled ⇒ minutes != null" holds.
+                          if (valueField.value == null || valueField.value === "") {
+                            valueField.onChange(enabledValue);
+                          }
+                        } else {
+                          // Clear the value on disable so a switched-off tier submits
+                          // `minutes: null` (matching the pre-redesign form, where the
+                          // checkbox never touched the separate minutes field) instead of
+                          // shipping a phantom value the user can no longer see or edit.
+                          valueField.onChange(null);
                         }
                       }}
                       className="mt-0.5"
