@@ -1531,6 +1531,32 @@ class AIManagerTask:
                 triggered = True
                 trigger_reason = "pnl_velocity_emergency"
 
+        # Condition 3 (FIX-003): per-position HARD LOSS. A position whose unrealized
+        # loss exceeds max_position_loss_pct of equity is force-closed for capital
+        # preservation — regardless of velocity, urgency, or the LLM/standard path.
+        # This closes the dead-zone where a big-but-CALM loser (no velocity spike) sat
+        # past the standard-path's max_single_decision_loss_pct skip and bled out
+        # (the Unni ESPORTS bug: -3% → -19% over 46 untouched eval cycles). The
+        # max_single_decision_loss_pct soft cap still governs whether the LLM may
+        # casually realize a loss; this hard cap is the capital-preservation backstop.
+        hard_loss_symbols: list[str] = []
+        hard_cap = getattr(self._config, "max_position_loss_pct", None)
+        if not triggered and hard_cap and equity_val > 0:
+            now_mono = time.monotonic()
+            for pos in positions:
+                symbol = pos.get("symbol", "")
+                if not symbol:
+                    continue
+                # Per-symbol cooldown: don't re-trigger same symbol within 30s.
+                if now_mono - self._emergency_closed_symbols.get(symbol, 0.0) < _EMERGENCY_CLOSE_SYMBOL_TTL_S:
+                    continue
+                upnl = _extract_upnl(pos)
+                if upnl < 0 and (abs(upnl) / equity_val) * 100 >= hard_cap:
+                    hard_loss_symbols.append(symbol)
+            if hard_loss_symbols:
+                triggered = True
+                trigger_reason = "position_hard_loss"
+
         if not triggered:
             return False
 
@@ -1562,6 +1588,10 @@ class AIManagerTask:
                 upnl = _extract_upnl(pos)
                 if upnl < 0:
                     close_symbols.append(symbol)
+        elif trigger_reason == "position_hard_loss":
+            # FIX-003: close only the specific position(s) over the hard-loss cap,
+            # sparing MR/locked/excluded (same filter as the other branches).
+            close_symbols = [s for s in hard_loss_symbols if s not in excluded and s not in locked]
         else:
             # Velocity trigger: only close the specific positions with extreme signals
             close_symbols = [s for s in velocity_emergency_symbols if s not in excluded and s not in locked]

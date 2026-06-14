@@ -17,7 +17,7 @@ The "name starts with U" hypothesis was tested and **refuted**.
 |-------|-------------|----------|--------|-------|
 | ESPORTS loss booked as `net_pnl=0` (`external` close) | [FIX-001](../../fixes/FIX-001-reconciler-pnl-zero.md) | High | **fixed** | Window padding + backfill (net_pnl now −19.078) |
 | Emergency close omitted ESPORTS (WS buffer race) | [FIX-002](../../fixes/FIX-002-emergency-orphan-race.md) | Critical | identified | Proximate cause of the orphan |
-| 3% loss cap blocked standard-path close of ESPORTS | [FIX-003](../../fixes/FIX-003-ai-3pct-loss-cap.md) | Critical | identified | Biggest loser became un-closeable |
+| 3% loss cap blocked standard-path close of ESPORTS | [FIX-003](../../fixes/FIX-003-ai-3pct-loss-cap.md) | Critical | **fixed** | New hard cap (max_position_loss_pct=8%) force-closes big losers |
 | Post-emergency disarm left loser unprotected | [FIX-004](../../fixes/FIX-004-emergency-rearm-gap.md) | High | identified | Cooldown + ref reset + breaker |
 | Counter-trend / oversold-bounce short signal | [FIX-005](../../fixes/FIX-005-short-bounce-signal-guard.md) | High | identified | MiniMax replay said No-Trade |
 

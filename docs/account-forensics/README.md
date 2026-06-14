@@ -44,7 +44,7 @@ docs/account-forensics/
 |----|-------|----------|--------|
 | [FIX-001](fixes/FIX-001-reconciler-pnl-zero.md) | Reconciler closed-PnL window excludes records whose `createdTime` predates `opened_at` (hides real losses) | High | **fixed** |
 | [FIX-002](fixes/FIX-002-emergency-orphan-race.md) | Emergency close omits a still-open loser (WS buffer race) | Critical | identified |
-| [FIX-003](fixes/FIX-003-ai-3pct-loss-cap.md) | 3% loss cap blocks closing the biggest losers | Critical | identified |
+| [FIX-003](fixes/FIX-003-ai-3pct-loss-cap.md) | Big-but-calm losers never closed (3% soft cap skips them, no force-close backstop) | Critical | **fixed** |
 | [FIX-004](fixes/FIX-004-emergency-rearm-gap.md) | Post-emergency disarm leaves a large loser unprotected | High | identified |
 | [FIX-005](fixes/FIX-005-short-bounce-signal-guard.md) | Structured signal shorts oversold/bounce-prone coins | High | identified |
 
