@@ -1,0 +1,86 @@
+[
+  {
+    "symbol": "GWEIUSDT",
+    "prod": "Short",
+    "score": -8,
+    "llm": "Short",
+    "llm_conf": 7,
+    "reversal": "medium",
+    "agree": true,
+    "net": "-1.48",
+    "status": "closed",
+    "reason": "Price below EMA9/21/50, RSI near oversold, strong 24h drop, short-term downtrend alignment confirms bearish momentum; bounce from intraday low raises reversal risk."
+  },
+  {
+    "symbol": "NOKIAUSDT",
+    "prod": "Short",
+    "score": -8,
+    "llm": "No Trade",
+    "llm_conf": 4,
+    "reversal": "high",
+    "agree": false,
+    "net": "-1.06",
+    "status": "closed",
+    "reason": "Price below EMAs with short-term downtrend, but RSI oversold at 32.3 suggests a bounce risk; no clear breakdown below support, so insufficient bearish evidence for a short."
+  },
+  {
+    "symbol": "HMSTRUSDT",
+    "prod": "Short",
+    "score": -7,
+    "llm": "Short",
+    "llm_conf": 7,
+    "reversal": "medium",
+    "agree": true,
+    "net": "0.36",
+    "status": "closed",
+    "reason": "Price below all EMAs, EMA9 < EMA21 confirming downtrend, RSI neutral, -10.6% drop over 24h and breakdown below 0.0001795 support on 15m, momentum down, suggests short."
+  },
+  {
+    "symbol": "ESPORTSUSDT",
+    "prod": "Short",
+    "score": -7,
+    "llm": "ERR",
+    "llm_conf": 0,
+    "reversal": "?",
+    "agree": false,
+    "net": "0.00",
+    "status": "closed",
+    "reason": "no_json: "
+  },
+  {
+    "symbol": "B3USDT",
+    "prod": "Short",
+    "score": -7,
+    "llm": "Long",
+    "llm_conf": 7,
+    "reversal": "low",
+    "agree": false,
+    "net": "3.34",
+    "status": "closed",
+    "reason": "Price above EMA9/21/50, EMA9>EMA21 bullish, RSI 60.8 neutral-bullish, 24h up 4.3%, short-term momentum positive, breakout above recent highs."
+  },
+  {
+    "symbol": "TSTBSCUSDT",
+    "prod": "Short",
+    "score": -7,
+    "llm": "No Trade",
+    "llm_conf": 5,
+    "reversal": "high",
+    "agree": false,
+    "net": "1.37",
+    "status": "closed",
+    "reason": "Price below EMAs and RSI oversold suggests bearish momentum, but near local support and oversold condition increase reversal risk; insufficient breakdown to justify short."
+  },
+  {
+    "symbol": "FOLKSUSDT",
+    "prod": "Long",
+    "score": 7,
+    "llm": "ERR",
+    "llm_conf": 0,
+    "reversal": "?",
+    "agree": false,
+    "net": "-4.17",
+    "status": "closed",
+    "reason": "no_json: "
+  }
+]
