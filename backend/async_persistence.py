@@ -2795,6 +2795,102 @@ class AsyncAnalysisDB:
         rows = await self.pool.fetch(sql, *params)
         return [dict(r) for r in rows]
 
+    # ── Performance analytics (trades-derived, spec 2026-06-14) ──────────────
+
+    async def get_performance_trades(
+        self, *, account_ids: list[str] | None = None,
+        account_type: str | None = None,
+        start: "datetime | None" = None, end: "datetime | None" = None,
+    ) -> list[dict]:
+        """Canonical closed-trade set for performance analytics (spec §4.1).
+
+        Includes partial-close children (NO parent_trade_id filter); excludes
+        partially_closed parents and exit_price=0/external placeholder rows.
+        Joined to active, non-deleted, analytics-included accounts.
+        Ordered by closed_at ASC, id ASC (deterministic). `end` is exclusive.
+        """
+        sql = (
+            "SELECT t.id, t.account_id, t.symbol, t.side, t.net_pnl, t.realized_pnl, "
+            "t.realized_pnl_pct, t.base_capital, t.close_reason, t.strategy_kind, "
+            "t.opened_at, t.closed_at, t.leverage "
+            "FROM trades t "
+            "JOIN trading_accounts ta ON ta.id = t.account_id "
+            "WHERE t.status = 'closed' AND t.closed_at IS NOT NULL AND t.exit_price > 0 "
+            "AND ta.deleted_at IS NULL AND ta.is_active = 1 "
+            "AND ta.include_in_analytics = TRUE "
+        )
+        params: list = []
+        if account_ids is not None:
+            params.append(account_ids)
+            sql += f"AND t.account_id = ANY(${len(params)}) "
+        if account_type:
+            params.append(account_type)
+            sql += f"AND ta.account_type = ${len(params)} "
+        if start is not None:
+            params.append(start)
+            sql += f"AND t.closed_at >= ${len(params)} "
+        if end is not None:
+            params.append(end)
+            sql += f"AND t.closed_at < ${len(params)} "
+        sql += "ORDER BY t.closed_at ASC, t.id ASC"
+        rows = await self.pool.fetch(sql, *params)
+        return [dict(r) for r in rows]
+
+    async def get_account_first_cycle_equity(self, account_ids: list[str]) -> dict[str, float]:
+        """Per account: earliest non-null trading_cycles.initial_equity (by created_at).
+
+        Returns {account_id: initial_equity} only for accounts that have one.
+        """
+        if not account_ids:
+            return {}
+        rows = await self.pool.fetch(
+            "SELECT DISTINCT ON (account_id) account_id, initial_equity "
+            "FROM trading_cycles "
+            "WHERE account_id = ANY($1) AND initial_equity IS NOT NULL "
+            "ORDER BY account_id, created_at ASC",
+            account_ids,
+        )
+        return {r["account_id"]: float(r["initial_equity"]) for r in rows}
+
+    async def get_account_first_trade_capital(self, account_ids: list[str]) -> dict[str, float]:
+        """Per account: first trade's base_capital (by opened_at), where non-null."""
+        if not account_ids:
+            return {}
+        rows = await self.pool.fetch(
+            "SELECT DISTINCT ON (account_id) account_id, base_capital "
+            "FROM trades "
+            "WHERE account_id = ANY($1) AND base_capital IS NOT NULL "
+            "ORDER BY account_id, opened_at ASC NULLS LAST",
+            account_ids,
+        )
+        return {r["account_id"]: float(r["base_capital"]) for r in rows}
+
+    async def get_scope_account_ids(
+        self, *, account_type: str | None = None, account_id: str | None = None,
+    ) -> list[str]:
+        """Resolve a performance scope to eligible account_ids.
+
+        Active, non-deleted, analytics-included. account_type filters live/demo;
+        account_id pins a single account. Currency note (spec §4.3): there is NO
+        per-trade settle_coin column, so v1 ASSUMES all in-scope accounts settle in
+        USDT and the page is labeled "USDT". Mixed-settlement portfolios are a
+        documented v1 limitation — no silent multi-currency sum.
+        """
+        sql = (
+            "SELECT id FROM trading_accounts "
+            "WHERE deleted_at IS NULL AND is_active = 1 AND include_in_analytics = TRUE "
+        )
+        params: list = []
+        if account_id:
+            params.append(account_id)
+            sql += f"AND id = ${len(params)} "
+        if account_type:
+            params.append(account_type)
+            sql += f"AND account_type = ${len(params)} "
+        sql += "ORDER BY id"
+        rows = await self.pool.fetch(sql, *params)
+        return [r["id"] for r in rows]
+
     async def get_latest_snapshot(self, account_id: str) -> Optional[Dict[str, Any]]:
         """Return an account's most recent daily snapshot, or None if none exist."""
         row = await self.pool.fetchrow(
