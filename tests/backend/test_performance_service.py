@@ -7,6 +7,7 @@ import pytest
 
 from backend.services.performance_service import (
     classify_trades, compute_pnl_kpis,
+    compute_starting_equity, compute_cumulative_curve, compute_drawdown_series,
 )
 # IMPORTANT (TDD import hygiene): import ONLY the helpers each task has implemented so far.
 # A module-level import of a not-yet-defined name fails at pytest COLLECTION time (before
@@ -64,3 +65,68 @@ class TestComputePnlKpis:
         assert k["net_pnl"] == pytest.approx(5.0)
         assert k["total_trades"] == 2
         assert k["win_count"] == 1  # null is not a win
+
+
+class TestStartingEquity:
+    def test_prefers_cycle_equity_one_value_per_account(self):
+        # account a1 has a cycle equity (100), a2 has none -> falls back to base_capital (50)
+        D, contrib = compute_starting_equity(
+            account_ids=["a1", "a2"],
+            cycle_equity={"a1": 100.0},
+            first_trade_capital={"a1": 999.0, "a2": 50.0},  # a1 ignores this (cycle wins)
+        )
+        assert D == pytest.approx(150.0)  # 100 + 50, NOT summed per-trade
+        assert contrib == {"a1", "a2"}
+
+    def test_null_account_excluded_returns_none_when_all_null(self):
+        D, contrib = compute_starting_equity(account_ids=["a1"], cycle_equity={}, first_trade_capital={})
+        assert D is None
+        assert contrib == set()
+
+    def test_partial_null_excludes_that_account(self):
+        # a2 has no equity anywhere -> excluded from D AND from the contributing set
+        D, contrib = compute_starting_equity(
+            account_ids=["a1", "a2"], cycle_equity={"a1": 100.0}, first_trade_capital={},
+        )
+        assert D == pytest.approx(100.0)
+        assert contrib == {"a1"}  # a2 excluded -> its P&L must NOT enter %/ratio numerators
+
+
+class TestCumulativeCurve:
+    def test_runs_from_zero_origin_ordered(self):
+        trades = [_t(5.0, datetime(2026, 5, 1, tzinfo=timezone.utc), _id=1),
+                  _t(-2.0, datetime(2026, 5, 2, tzinfo=timezone.utc), _id=2),
+                  _t(3.0, datetime(2026, 5, 3, tzinfo=timezone.utc), _id=3)]
+        curve = compute_cumulative_curve(trades)
+        assert [round(p["cum_pnl"], 2) for p in curve] == [5.0, 3.0, 6.0]
+        assert [round(p["peak"], 2) for p in curve] == [5.0, 5.0, 6.0]
+
+    def test_null_pnl_coalesced(self):
+        trades = [_t(None, datetime(2026, 5, 1, tzinfo=timezone.utc), _id=1),
+                  _t(4.0, datetime(2026, 5, 2, tzinfo=timezone.utc), _id=2)]
+        curve = compute_cumulative_curve(trades)
+        assert [round(p["cum_pnl"], 2) for p in curve] == [0.0, 4.0]
+
+
+class TestDrawdownSeries:
+    def test_peak_seeded_at_D_so_early_loss_registers(self):
+        # D=100; first trade is a loss -> drawdown must be negative, NOT 0
+        trades = [_t(-10.0, datetime(2026, 5, 1, tzinfo=timezone.utc), _id=1),
+                  _t(5.0, datetime(2026, 5, 2, tzinfo=timezone.utc), _id=2)]
+        series, dd_max = compute_drawdown_series(trades, D=100.0)
+        # equity_proxy: 90, 95 ; peak seeded at D=100 -> 100,100
+        assert series[0]["drawdown_pct"] == pytest.approx((90 - 100) / 100 * 100)  # -10.0
+        assert dd_max["max_drawdown_pct"] == pytest.approx(-10.0)
+
+    def test_naive_seed_would_hide_it_guard(self):
+        # If peak were seeded at equity_proxy[0]=90 instead of D=100, first dd would be 0.
+        trades = [_t(-10.0, datetime(2026, 5, 1, tzinfo=timezone.utc), _id=1)]
+        series, _ = compute_drawdown_series(trades, D=100.0)
+        assert series[0]["drawdown_pct"] < 0  # proves D-seed, not equity_proxy[0]-seed
+
+    def test_d_null_returns_abs_drawdown(self):
+        trades = [_t(-10.0, datetime(2026, 5, 1, tzinfo=timezone.utc), _id=1)]
+        series, dd_max = compute_drawdown_series(trades, D=None)
+        # absolute dollars under *_abs semantics; pct is None
+        assert dd_max["max_drawdown_abs"] == pytest.approx(-10.0)
+        assert dd_max["max_drawdown_pct"] is None
