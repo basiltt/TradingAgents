@@ -6,13 +6,13 @@
 
 **Architecture:** A new `PerformanceService` computes everything from `trades` + `trading_cycles` (no dependency on the broken snapshot tables, no live Bybit call on the historical path). A new `/api/v1/performance` router exposes `overview`, `trades-breakdown`, `trades`, and `live`. The frontend replaces the 604-line `AnalyticsDashboard` with a composed `PerformanceDashboard` (control bar + sticky hero + `NeuTabs`) using TanStack Query. Delivered in 5 phases; **Phases 1–2 alone make the page work** and are independently shippable.
 
-**Tech Stack:** Python 3.12 / FastAPI / asyncpg (backend); pytest + pytest-asyncio (backend tests); React 18 / TypeScript / TanStack Query + Router / Tailwind v4 / neumorphism design system / Recharts (frontend); Vitest + Testing Library (frontend tests).
+**Tech Stack:** Python 3.12 / FastAPI / asyncpg (backend); pytest + pytest-asyncio in **strict** mode — every async test needs `@pytest.mark.asyncio` (backend tests); React 19 / TypeScript / TanStack Query + Router / Tailwind v4 / neumorphism design system / Recharts 3 (frontend); Vitest 4 + Testing Library 16 (frontend tests).
 
 **Spec:** `docs/superpowers/specs/2026-06-14-performance-tab-redesign-design.md` (read it before starting — this plan implements it).
 
 **Key conventions discovered in the codebase (follow these exactly):**
 - DB access: `AsyncAnalysisDB` exposes `self.pool` (asyncpg). Query with `await self.pool.fetch("SELECT ... WHERE x=$1", val)` → list of `asyncpg.Record`; wrap rows as `dict(r)`. Use `fetchrow`/`fetchval` for single row/scalar.
-- Routers: `APIRouter(prefix="/performance", tags=["performance"])`, registered in `backend/main.py` via `app.include_router(performance_router, prefix="/api/v1")` (lazy-imported inside the function near line 718–758). Services reached via `request.app.state.<name>`.
+- Routers: `APIRouter(prefix="/performance", tags=["performance"])`, registered in `backend/main.py` via `app.include_router(performance_router, prefix="/api/v1")` (lazy router imports are around line 763; the `include_router` calls run ~L771–796). Services reached via `request.app.state.<name>`.
 - Service wiring: services are set on `app.state.<name>` during startup (e.g. `app.state.accounts_service`). The new service is set the same way.
 - Pydantic v2 response models live in `backend/schemas/__init__.py` (`from pydantic import BaseModel, ConfigDict, Field`).
 - Backend tests: `tests/backend/test_<name>.py`, classes grouping related cases, `unittest.mock.AsyncMock/MagicMock`, `@pytest.mark.asyncio` for async. Run: `python -m pytest tests/backend/test_x.py -x -q`.
@@ -68,12 +68,11 @@
 
 - [ ] **Step 1: Find the migrations list and current max version**
 
-Run: `grep -n "_MIGRATIONS\s*=\|^\s*(\s*[0-9]\+,\|_apply_migrations" backend/async_persistence.py | head -20`
-Then read the last few migration tuples to learn the exact tuple shape (version int, SQL string) and the current highest version number (the spec references v48+; confirm the real current max).
+Run: `grep -n "_MIGRATIONS\s*=\|_apply_migrations" backend/async_persistence.py` then read the last few entries of the `_MIGRATIONS` list. Format confirmed: `list[tuple[int, _MigrationSQL]]` where the SQL is either a string OR a callable — string tuples `(version, "SQL")` are valid and what you want here. **The current max version is 65** (verified), so the new migration is **version 66**. There is NO description field in the tuple.
 
 - [ ] **Step 2: Append the new migration**
 
-Add a new tuple to the END of `_MIGRATIONS` with version = (current max + 1). Use the established tuple format you observed in Step 1. The SQL:
+Add a new tuple `(66, "<SQL below>")` to the END of `_MIGRATIONS` (matching the existing string-tuple format). The SQL:
 
 ```sql
 CREATE INDEX IF NOT EXISTS idx_trades_closed_at
@@ -81,7 +80,7 @@ ON trades (closed_at)
 WHERE status = 'closed';
 ```
 
-(If the codebase's migration entries are `(version, "SQL")` tuples, match that exactly. If they carry a description field, include `"add idx_trades_closed_at partial index for portfolio-wide performance ordering"`.)
+(The migration entries are `(version, "SQL")` tuples — no description field — so the new entry is just `(66, "CREATE INDEX ...")`.)
 
 - [ ] **Step 3: Verify migrations still apply cleanly**
 
@@ -166,7 +165,7 @@ git commit -m "feat(perf): add get_performance_trades canonical query"
 **Files:**
 - Modify: `backend/async_persistence.py`
 
-Per spec §3, `D` = Σ per-account earliest non-null `trading_cycles.initial_equity`, fallback first-trade `base_capital`. This task returns the raw per-account components; the service computes `D` from them (1.5).
+Per spec §3, `D` = Σ per-account earliest non-null `trading_cycles.initial_equity`, fallback first-trade `base_capital`. This task returns the raw per-account components; `compute_starting_equity` (Task 1.6) computes `D` + the contributing-account set from them.
 
 - [ ] **Step 1: Add two methods**
 
@@ -226,7 +225,11 @@ async def get_scope_account_ids(
     """Resolve a performance scope to eligible account_ids.
 
     Active, non-deleted, analytics-included. account_type filters live/demo;
-    account_id pins a single account. Currency note: v1 assumes USDT-settled.
+    account_id pins a single account. Currency note (spec §4.3): there is NO per-trade
+    settle_coin column, so v1 ASSUMES all in-scope accounts settle in USDT and the page is
+    labeled "USDT" (meta.currency). Mixed-settlement portfolios are a documented v1
+    limitation — do not attempt a silent multi-currency sum. If a settle-coin signal is
+    later added to trading_accounts, filter it here.
     """
     sql = (
         "SELECT id FROM trading_accounts "
@@ -275,10 +278,14 @@ from datetime import datetime, timezone
 import pytest
 
 from backend.services.performance_service import (
-    classify_trades, compute_pnl_kpis, compute_cumulative_curve,
-    compute_drawdown_series, build_daily_return_series, compute_risk_ratios,
-    compute_starting_equity, resolve_timeframe_window, compute_max_consecutive,
+    classify_trades, compute_pnl_kpis,
 )
+# IMPORTANT (TDD import hygiene): import ONLY the helpers each task has implemented so far.
+# A module-level import of a not-yet-defined name fails at pytest COLLECTION time (before
+# any test runs), so `-k` can't bypass it and the task's "expect PASS" would be unreachable.
+# Each later task (1.6, 1.7, 1.8, 1.9) extends THIS import line with the names it adds in
+# its own Step 1, right before writing that task's tests. By Task 1.8 the import lists all
+# 12 pure helpers; Task 1.9 additionally imports `PerformanceService`.
 
 
 def _t(net_pnl, closed_at, *, realized=None, opened_at=None, base_capital=None,
@@ -442,29 +449,31 @@ git commit -m "feat(perf): trade classification + P&L KPIs (pure, tested)"
 
 - [ ] **Step 1: Write failing tests**
 
-Append to `tests/backend/test_performance_service.py`:
-
+First **extend the import line** at the top of `tests/backend/test_performance_service.py` to add this task's new helpers: `compute_starting_equity, compute_cumulative_curve, compute_drawdown_series`. Then append:
 ```python
 class TestStartingEquity:
     def test_prefers_cycle_equity_one_value_per_account(self):
         # account a1 has a cycle equity (100), a2 has none → falls back to base_capital (50)
-        D = compute_starting_equity(
+        D, contrib = compute_starting_equity(
             account_ids=["a1", "a2"],
             cycle_equity={"a1": 100.0},
             first_trade_capital={"a1": 999.0, "a2": 50.0},  # a1 ignores this (cycle wins)
         )
         assert D == pytest.approx(150.0)  # 100 + 50, NOT summed per-trade
+        assert contrib == {"a1", "a2"}
 
     def test_null_account_excluded_returns_none_when_all_null(self):
-        D = compute_starting_equity(account_ids=["a1"], cycle_equity={}, first_trade_capital={})
+        D, contrib = compute_starting_equity(account_ids=["a1"], cycle_equity={}, first_trade_capital={})
         assert D is None
+        assert contrib == set()
 
     def test_partial_null_excludes_that_account(self):
-        # a2 has no equity anywhere → excluded from D entirely
-        D = compute_starting_equity(
+        # a2 has no equity anywhere → excluded from D AND from the contributing set
+        D, contrib = compute_starting_equity(
             account_ids=["a1", "a2"], cycle_equity={"a1": 100.0}, first_trade_capital={},
         )
         assert D == pytest.approx(100.0)
+        assert contrib == {"a1"}  # a2 excluded → its P&L must NOT enter %/ratio numerators
 
 
 class TestCumulativeCurve:
@@ -520,24 +529,27 @@ Append to `backend/services/performance_service.py`:
 def compute_starting_equity(
     *, account_ids: list[str], cycle_equity: dict[str, float],
     first_trade_capital: dict[str, float],
-) -> float | None:
+) -> tuple[float | None, set[str]]:
     """D = Σ per-account starting equity (cycle initial_equity, else first base_capital).
 
-    ONE value per account; accounts with neither are excluded (spec §3). Returns
-    None when no account contributes a positive value.
+    ONE value per account; accounts with neither are EXCLUDED (spec §3). Returns
+    (D, contributing_account_ids). D is None when no account contributes a positive
+    value. The contributing set lets callers exclude a null-D account's P&L from the
+    numerator of every %/ratio metric (spec §4.1 aggregate null-D rule) so its profit is
+    never divided by other accounts' capital.
     """
     total = Decimal(0)
-    found = False
+    contributing: set[str] = set()
     for aid in account_ids:
         val = cycle_equity.get(aid)
         if val is None:
             val = first_trade_capital.get(aid)
         if val is not None and val > 0:
             total += Decimal(str(val))
-            found = True
-    if not found or total <= 0:
-        return None
-    return float(total)
+            contributing.add(aid)
+    if not contributing or total <= 0:
+        return None, set()
+    return float(total), contributing
 
 
 def compute_cumulative_curve(trades: list[dict]) -> list[dict]:
@@ -558,7 +570,7 @@ def compute_cumulative_curve(trades: list[dict]) -> list[dict]:
 
 def compute_drawdown_series(
     trades: list[dict], D: float | None,
-) -> tuple[list[dict], dict | float]:
+) -> tuple[list[dict], dict]:
     """Drawdown from running peak of equity_proxy = D + cum_pnl, peak SEEDED AT D.
 
     Returns (series, max_drawdown). When D is present, series carries drawdown_pct
@@ -613,7 +625,7 @@ git commit -m "feat(perf): starting equity D, cumulative curve, drawdown (peak s
 
 - [ ] **Step 1: Write failing tests**
 
-Append:
+First **extend the import line** with this task's new helpers: `build_daily_return_series, compute_risk_ratios, resolve_timeframe_window, compute_max_consecutive`. Then append:
 
 ```python
 class TestMaxConsecutive:
@@ -805,7 +817,8 @@ def compute_risk_ratios(
     else:
         sharpe = portfolio_stats.calc_sharpe(series) or None  # 0.0 → None
         sortino = portfolio_stats.calc_sortino(series) or None
-    calmar = None if max_drawdown_pct in (None, 0) else portfolio_stats.calc_calmar(series, abs(max_drawdown_pct))
+    # Calmar: None on no-drawdown; also map a 0.0 result (zero mean return) → None for parity.
+    calmar = None if max_drawdown_pct in (None, 0) else (portfolio_stats.calc_calmar(series, abs(max_drawdown_pct)) or None)
     return {"sharpe_ratio": sharpe, "sortino_ratio": sortino, "calmar_ratio": calmar}
 
 
@@ -856,6 +869,8 @@ git commit -m "feat(perf): daily-return series, risk ratios, max_consecutive, ti
 - Modify: `tests/backend/test_performance_service.py`
 
 - [ ] **Step 1: Write failing tests**
+
+First **extend the import line** with this task's new helpers: `compute_daily_pnl, compute_monthly_pnl, compute_drawdown_duration` (the import now lists all 12 pure helpers). Then append:
 
 ```python
 class TestDailyMonthlyPnl:
@@ -909,15 +924,26 @@ def compute_daily_pnl(trades: list[dict]) -> list[dict]:
     return [{"date": d.isoformat(), "pnl": float(v)} for d, v in sorted(agg.items())]
 
 
-def compute_monthly_pnl(trades: list[dict], D: float | None) -> list[dict]:
-    """Sum net_pnl by UTC year-month; return_pct = month_pnl / D (None when D null/≤0)."""
+def compute_monthly_pnl(trades: list[dict], D: float | None,
+                        pct_trades: "list[dict] | None" = None) -> list[dict]:
+    """Monthly grid. Dollar `pnl` sums `net_pnl` over `trades` (every in-scope account).
+    `return_pct = month_pnl / D` is computed from `pct_trades` — the D-relative subset
+    (accounts that contributed to D) so a null-D account's P&L is never divided by other
+    accounts' capital (spec §4.1). Defaults `pct_trades = trades` when not given.
+    """
+    pct_trades = trades if pct_trades is None else pct_trades
     agg: dict[str, Decimal] = {}
     for t in trades:
         key = t["closed_at"].strftime("%Y-%m")
         agg[key] = agg.get(key, Decimal(0)) + _npl(t)
+    pct_agg: dict[str, Decimal] = {}
+    for t in pct_trades:
+        key = t["closed_at"].strftime("%Y-%m")
+        pct_agg[key] = pct_agg.get(key, Decimal(0)) + _npl(t)
     out = []
     for key, v in sorted(agg.items()):
-        rp = float(v / Decimal(str(D)) * 100) if (D and D > 0) else None
+        rp = (float(pct_agg.get(key, Decimal(0)) / Decimal(str(D)) * 100)
+              if (D and D > 0) else None)
         out.append({"month": key, "pnl": float(v), "return_pct": rp})
     return out
 
@@ -1077,6 +1103,30 @@ class TestComputeOverview:
         # empty scope → get_performance_trades is never called with this scope's data
         assert result["kpis"]["total_trades"] == 0
         assert result["kpis"]["net_pnl"] == pytest.approx(0.0)
+
+    @pytest.mark.asyncio
+    async def test_aggregate_null_D_account_does_not_inflate_return(self):
+        """A null-D account's P&L must NOT be divided by other accounts' capital (spec §4.1):
+        it counts in dollar net_pnl but is excluded from total_return_pct's numerator."""
+        from unittest.mock import AsyncMock, MagicMock
+        from backend.services.performance_service import PerformanceService
+
+        anchor = datetime(2026, 6, 14, 12, tzinfo=timezone.utc)
+        # a1 has D=100 and +10 P&L; a2 has NO cycle and NO base_capital (null-D) and +90 P&L
+        trades = [_t(10.0, datetime(2026, 5, 1, tzinfo=timezone.utc), _id=1, account_id="a1"),
+                  _t(90.0, datetime(2026, 5, 2, tzinfo=timezone.utc), _id=2, account_id="a2")]
+        db = MagicMock()
+        db.get_scope_account_ids = AsyncMock(return_value=["a1", "a2"])
+        db.get_performance_trades = AsyncMock(return_value=trades)
+        db.get_account_first_cycle_equity = AsyncMock(return_value={"a1": 100.0})  # a2 absent
+        db.get_account_first_trade_capital = AsyncMock(return_value={})            # a2 absent
+        svc = PerformanceService(db=db, accounts_service=None)
+        result = await svc.compute_overview(scope="all", timeframe="ALL", anchor=anchor)
+        # dollar P&L counts BOTH accounts
+        assert result["kpis"]["net_pnl"] == pytest.approx(100.0)
+        # but total_return_pct uses ONLY a1's +10 over D=100 = 10%, NOT 100/100=100%
+        assert result["kpis"]["total_return_pct"] == pytest.approx(10.0)
+        assert result["meta"]["starting_equity"] == pytest.approx(100.0)
 ```
 
 > **Note for the implementer:** in these tests `get_performance_trades` is mocked to return the full list regardless of `start`/`end`, because the service now fetches **all-history** (`start=None, end=None`) and slices in Python. The window-slice test asserts the service does the slicing correctly.
@@ -1106,16 +1156,26 @@ class PerformanceService:
         return ids, None, scope
 
     async def _live_overlay(self, account_ids: list[str]) -> tuple[dict, bool]:
-        """Best-effort live totals via accounts_service.get_dashboard. Degrades to None."""
+        """Best-effort live totals via accounts_service.get_dashboard. Degrades to None.
+
+        NOTE: dashboard cards key the account PK as `id` (from `**acc`), unrealized P&L as
+        `total_perp_upl`, and these money fields are STRINGS (e.g. "123.45") or None on a
+        disabled/errored card — so coerce with float(x or 0). (Verified against
+        accounts_service._fetch_card.)
+        """
         nulls = {"total_equity": None, "unrealized_pnl": None, "open_count": None}
-        if self._accounts is None:
+        if self._accounts is None or not account_ids:
             return nulls, True
         try:
             cards = await self._accounts.get_dashboard()
             wanted = set(account_ids)
-            eq = sum(float(c.get("total_equity") or 0) for c in cards if c.get("account_id") in wanted)
-            upl = sum(float(c.get("total_unrealised_pnl") or 0) for c in cards if c.get("account_id") in wanted)
-            oc = sum(int(c.get("positions_count") or 0) for c in cards if c.get("account_id") in wanted)
+            mine = [c for c in cards if c.get("id") in wanted]
+            # if a card errored/disabled its money fields are None → treat the overlay as degraded
+            if not mine or any(c.get("total_equity") is None for c in mine):
+                return nulls, True
+            eq = sum(float(c.get("total_equity") or 0) for c in mine)
+            upl = sum(float(c.get("total_perp_upl") or 0) for c in mine)
+            oc = sum(int(c.get("positions_count") or 0) for c in mine)
             return {"total_equity": eq, "unrealized_pnl": upl, "open_count": oc}, False
         except Exception:  # noqa: BLE001 — any live failure degrades the overlay only
             return nulls, True
@@ -1127,33 +1187,40 @@ class PerformanceService:
         if account_id is not None and not account_ids:
             account_ids = []  # explicit empty — see _fetch_scoped below
         start, end = resolve_timeframe_window(timeframe, anchor)
-        # starting equity D (DB-only, all-history components)
+        # starting equity D (DB-only, all-history components) + the set of accounts that
+        # actually contributed to D (null-D accounts are excluded from %/ratio metrics).
         cycle_eq = await self._db.get_account_first_cycle_equity(account_ids) if account_ids else {}
         first_cap = await self._db.get_account_first_trade_capital(account_ids) if account_ids else {}
-        D = compute_starting_equity(account_ids=account_ids, cycle_equity=cycle_eq,
-                                    first_trade_capital=first_cap)
+        D, d_accounts = compute_starting_equity(account_ids=account_ids, cycle_equity=cycle_eq,
+                                                first_trade_capital=first_cap)
         # ALL-HISTORY trade set (origin 0); the window is applied by SLICING, never by
         # rebasing — so a 1M view shows the all-time line over the last month (spec §4.1).
         all_trades = await self._fetch_scoped(account_ids, account_id, account_type, start=None, end=None)
         win_trades = [t for t in all_trades
                       if (start is None or t["closed_at"] >= start) and t["closed_at"] < end]
-        # KPIs use the WINDOWED subset
+        # D-RELATIVE subset: only trades from accounts that contributed to D. Used for every
+        # metric whose denominator is D (total_return_pct, drawdown %, risk ratios) so a
+        # null-D account's P&L is never divided by other accounts' capital (spec §4.1).
+        all_d = [t for t in all_trades if t["account_id"] in d_accounts]
+        win_d = [t for t in win_trades if t["account_id"] in d_accounts]
+        # Dollar KPIs use the full WINDOWED in-scope subset (P&L counts every account).
         pnl = compute_pnl_kpis(win_trades)
         mc_w, mc_l = compute_max_consecutive(win_trades)
-        # Curve/drawdown: compute over ALL history, then slice to the window (carries the
-        # pre-window running total + pre-window peak into the first in-window point).
+        # Raw cumulative-P&L curve covers ALL in-scope trades (dollars, no D needed);
+        # slice to the window (carries the pre-window running total into the first point).
         full_curve = compute_cumulative_curve(all_trades)
         curve = [p for p in full_curve
                  if (start is None or _parse_ts(p["t"]) >= start) and _parse_ts(p["t"]) < end]
-        full_dd, _ = compute_drawdown_series(all_trades, D)
+        # Drawdown % uses the D-relative subset (equity_proxy = D + cum needs a consistent base).
+        full_dd, _ = compute_drawdown_series(all_d, D)
         dd_series = [p for p in full_dd
                      if (start is None or _parse_ts(p["t"]) >= start) and _parse_ts(p["t"]) < end]
         dd_max = _max_drawdown_over(dd_series, D)  # max over the WINDOW slice
-        dd_days, dd_recovered = compute_drawdown_duration(win_trades, D)
-        # Risk ratios: build the all-history daily-% series, then restrict to in-window days
-        ratios = compute_risk_ratios(all_trades, D, dd_max.get("max_drawdown_pct"),
+        dd_days, dd_recovered = compute_drawdown_duration(win_d, D)
+        # Risk ratios: all-history D-relative daily-% series, restricted to in-window days.
+        ratios = compute_risk_ratios(all_d, D, dd_max.get("max_drawdown_pct"),
                                      window=(start, end))
-        total_return_pct = (float(sum((_npl(t) for t in win_trades), Decimal(0)) / Decimal(str(D)) * 100)
+        total_return_pct = (float(sum((_npl(t) for t in win_d), Decimal(0)) / Decimal(str(D)) * 100)
                             if (D and D > 0) else None)
         hold = [(t["closed_at"] - t["opened_at"]).total_seconds() / 3600
                 for t in win_trades if t.get("opened_at")]
@@ -1169,13 +1236,13 @@ class PerformanceService:
         return {
             "kpis": kpis,
             "kpis_prev": await self._compute_prev(scope, timeframe, anchor, account_ids,
-                                                  account_id, account_type, D),
+                                                  account_id, account_type, D, d_accounts),
             "equity_curve": curve,
             "equity_now": ({"t": anchor.isoformat(), "equity": overlay["total_equity"]}
                            if overlay["total_equity"] is not None else None),
             "drawdown_series": dd_series,
             "daily_pnl": compute_daily_pnl(win_trades),
-            "monthly_pnl": compute_monthly_pnl(win_trades, D),
+            "monthly_pnl": compute_monthly_pnl(win_trades, D, pct_trades=win_d),
             "meta": {
                 "currency": "USDT", "grouping_tz": "UTC",
                 "trading_days": _trading_day_count(win_trades),
@@ -1201,8 +1268,13 @@ class PerformanceService:
             account_ids=account_ids or None, account_type=account_type, start=start, end=end,
         )
 
-    async def _compute_prev(self, scope, timeframe, anchor, account_ids, account_id, account_type, D) -> dict | None:
-        """Prior equal-length window KPIs for hero delta chips. None for ALL."""
+    async def _compute_prev(self, scope, timeframe, anchor, account_ids, account_id,
+                            account_type, D, d_accounts) -> dict | None:
+        """Prior equal-length window KPIs for hero delta chips. None for ALL.
+
+        `d_accounts` is the set of accounts that contributed to D — %/ratio metrics use only
+        their trades (same aggregate null-D rule as compute_overview).
+        """
         if timeframe == "ALL":
             return None
         start, _ = resolve_timeframe_window(timeframe, anchor)
@@ -1210,16 +1282,19 @@ class PerformanceService:
             return None
         prev_len = anchor - start
         prev_start, prev_end = start - prev_len, start  # equal-length window before `start`
-        # all-history up to prev_end, sliced to the prior window (so cum carries pre-window P&L)
+        # all-history up to prev_end, then slice to [prev_start, prev_end) IN PYTHON (don't
+        # rely on the DB's `end` bound — keeps this consistent with compute_overview's slicing).
         all_prev = await self._fetch_scoped(account_ids, account_id, account_type, start=None, end=prev_end)
+        all_prev = [t for t in all_prev if t["closed_at"] < prev_end]
         prev_win = [t for t in all_prev if t["closed_at"] >= prev_start]
-        pnl = compute_pnl_kpis(prev_win)
-        # prior-window-END realized equity proxy = D + cum(ALL trades through prev_end)
-        cum_to_prev_end = float(sum((_npl(t) for t in all_prev), Decimal(0)))
-        full_dd, _ = compute_drawdown_series(all_prev, D)
-        prev_dd = [p for p in full_dd if p["t"] and _parse_ts(p["t"]) >= prev_start]
+        all_prev_d = [t for t in all_prev if t["account_id"] in d_accounts]
+        pnl = compute_pnl_kpis(prev_win)  # dollar/win KPIs over all in-scope
+        # prior-window-END realized equity proxy = D + cum(D-relative trades through prev_end)
+        cum_to_prev_end = float(sum((_npl(t) for t in all_prev_d), Decimal(0)))
+        full_dd, _ = compute_drawdown_series(all_prev_d, D)
+        prev_dd = [p for p in full_dd if p["t"] and prev_start <= _parse_ts(p["t"]) < prev_end]
         dd_max = _max_drawdown_over(prev_dd, D)
-        ratios = compute_risk_ratios(all_prev, D, dd_max.get("max_drawdown_pct"),
+        ratios = compute_risk_ratios(all_prev_d, D, dd_max.get("max_drawdown_pct"),
                                      window=(prev_start, prev_end))
         return {
             "total_equity": (D + cum_to_prev_end) if D is not None else None,
@@ -1273,7 +1348,7 @@ git commit -m "feat(perf): PerformanceService.compute_overview orchestrator"
 **Files:**
 - Modify: `backend/schemas/__init__.py`
 
-Pydantic models give the endpoint a typed, validated contract. Use `model_config = ConfigDict(extra="forbid")` (the file's convention) and `Optional[...]` for every nullable metric.
+These Pydantic models document the typed contract and mirror the TS types (Task 2.2); they are the authoritative field list. Use `model_config = ConfigDict(extra="forbid")` (the file's convention) and `Optional[...]` for every nullable metric. **The router (Task 1.11) returns the raw service dict and deliberately does NOT set `response_model`** — `extra="forbid"` would reject the response at runtime if the service ever adds a field, turning an additive change into a 500. The models are the contract-of-record for the frontend and a structural reference for reviewers; if you later want runtime validation, construct `PerformanceOverviewResponse(**result)` inside the endpoint (which coerces/validates) rather than relying on FastAPI's `response_model` serialization.
 
 - [ ] **Step 1: Add the models**
 
@@ -1545,7 +1620,7 @@ This guarantees `app.state.performance_service` always exists; the live overlay 
 
 - [ ] **Step 2: Register the router**
 
-In the router-registration block (~lines 718–758), add the lazy import alongside the others:
+In the router-registration block (lazy imports ~L763, `include_router` calls ~L771–796 — find them with `grep -n "include_router\|from backend.routers" backend/main.py`), add the lazy import alongside the others:
 ```python
 from backend.routers.performance import router as performance_router
 ```
@@ -1720,13 +1795,14 @@ import type { PerformanceOverview } from "@/components/analytics/performanceType
 export const performanceApi = {
   getOverview: (scope: string, timeframe: string, signal?: AbortSignal) =>
     request<PerformanceOverview>(
-      `/api/v1/performance/overview?scope=${encodeURIComponent(scope)}&timeframe=${encodeURIComponent(timeframe)}`,
-      { signal },
+      buildQuery("/api/v1/performance/overview", { scope, timeframe }),
+      undefined,
+      signal,
     ),
 };
 ```
 
-(Use whatever the file's internal GET helper is named — read the top of `client.ts`; the existing code uses a `request<T>(path, opts)` helper. Match its signature exactly.)
+(The real GET helper is `request<T>(path, init?, signal?, timeoutMs?)` — pass `undefined` for `init` and the `signal` third, exactly as `accountsApi.list` does at client.ts:957–965. `buildQuery(path, params)` is the existing query-string helper used throughout the file; reuse it instead of hand-building the URL.)
 
 - [ ] **Step 2: Typecheck + commit**
 
@@ -1807,7 +1883,7 @@ git commit -m "feat(perf): exclude performance-live queries from persistence"
 
 **Files:**
 - Modify: `frontend/src/components/analytics/EquityCurveChart.tsx`, `DrawdownChart.tsx`, `DailyPnlChart.tsx`, `MonthlyPnlGrid.tsx`
-- Modify (migrate): `frontend/src/components/analytics/__tests__/Charts.test.tsx`, `DailyPnlChart.test.tsx`, `MonthlyPnlGrid.test.tsx`
+- Modify (migrate): `frontend/src/components/analytics/__tests__/Charts.test.tsx`, `DailyPnlChart.test.tsx`, `MonthlyPnlGrid.test.tsx` (the 4th existing test, `KpiCards.test.tsx`, is migrated in Task 2.7 — note that `KpiCards.tsx` is rewritten there, NOT here, so don't touch it in this task)
 
 Each chart currently takes `snapshots: DailySnapshot[]`. Rewrite each to take the new series type. Keep the Recharts/CSS-var visual scaffolding.
 
@@ -1975,7 +2051,7 @@ git commit -m "feat(perf): rewrite KpiCards for numeric kpis"
 **Files:**
 - Create: `frontend/src/components/analytics/PerformanceControlBar.tsx`
 
-Single scope selector (All / Live / Demo + individual accounts) and a 7-button timeframe picker. Fetch accounts for the dropdown via the existing accounts API (read `accountsApi` in `client.ts` for the list method, e.g. `accountsApi.getAccounts` / `listAccounts`).
+Single scope selector (All / Live / Demo + individual accounts) and a 7-button timeframe picker. This component is **presentational** — it receives the account list as a prop (`accounts`); the parent `PerformanceDashboard` (Task 2.11) does the fetching via `accountsApi.list` and passes it down.
 
 - [ ] **Step 1: Write the component**
 
@@ -2143,7 +2219,7 @@ export function OverviewTab({ overview }: { overview: PerformanceOverview }) {
 }
 ```
 
-(Add an optional `lowDataNotice?: boolean` prop to `KpiCards` in Task 2.7 that, when true, collapses the Risk group to a "needs ≥10 trading days" note instead of three "—" tiles — per spec §5.4. If you already finished 2.7, add the prop now.)
+(The `lowDataNotice?: boolean` prop is defined on `KpiCards` in Task 2.7; when true it collapses the Risk group to a "needs ≥10 trading days" note instead of the four "—" ratio tiles — per spec §5.4.)
 
 - [ ] **Step 2: Typecheck + commit**
 
@@ -2332,21 +2408,18 @@ git commit -m "feat(perf): PerformanceDashboard shell with Overview tab"
 
 - [ ] **Step 1: Point `/analytics` at the new dashboard**
 
-In `route-tree.tsx`: change the lazy import (line 75) and the `PerformancePage` wrapper (line 283) to use `PerformanceDashboard`:
+In `route-tree.tsx`: change the lazy import (line 75) and the `PerformancePage` wrapper (line 283) to use `PerformanceDashboard`. **Do NOT rewrite the wrapper from scratch** — read the existing `PerformancePage` first (it wraps the component in the repo's `RouteSuspense` with a real fallback) and change ONLY the lazy import target + the inner component name, leaving the existing `RouteSuspense`/fallback untouched:
 ```typescript
+// line 75 — swap the lazy import target:
 const PerformanceDashboard = lazy(() =>
   import("@/components/analytics/PerformanceDashboard").then((m) => ({ default: m.PerformanceDashboard })),
 );
-// ...
-function PerformancePage() {
-  return (
-    <Suspense fallback={/* existing fallback */}>
-      <PerformanceDashboard />
-    </Suspense>
-  );
-}
+// line 283 — inside the EXISTING PerformancePage wrapper, swap only the inner element:
+//   <RouteSuspense> ... <AnalyticsDashboard /> ... </RouteSuspense>
+//   becomes
+//   <RouteSuspense> ... <PerformanceDashboard /> ... </RouteSuspense>
 ```
-(Keep the existing `Suspense`/layout wrapper exactly as it was — only swap the inner component and import.)
+(Keep the existing `RouteSuspense`/layout wrapper and its fallback exactly as they were — only swap the inner component and the lazy import.)
 
 - [ ] **Step 2: Update the embedding**
 
