@@ -1734,6 +1734,8 @@ CREATE TABLE IF NOT EXISTS account_cooloff_state (
     # CONCURRENTLY (the transactional migration runner rejects CONCURRENTLY).
     (65, "CREATE INDEX IF NOT EXISTS idx_scan_results_completed_at "
          "ON scan_results(completed_at DESC NULLS LAST, id DESC) WHERE ABS(score) >= 6"),
+    (66, "CREATE INDEX IF NOT EXISTS idx_trades_closed_at "
+         "ON trades (closed_at) WHERE status = 'closed'"),
 ]
 
 
