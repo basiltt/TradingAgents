@@ -420,6 +420,51 @@ async def test_stray_child_cancel_does_not_tear_down_healthy_tail():
     assert accounts.placements.get("accB", []) == []
 
 
+@pytest.mark.asyncio
+async def test_max_same_direction_cap_width_invariant():
+    # Final-review QA gap: the max_same_direction cap (a per-account concentration limit
+    # counting position_directions) must produce identical placements at width 1 and 2.
+    # All signals are 'sell' (=> short); max_same_direction=2 caps each account at 2
+    # short positions, skipping the rest — width-invariantly.
+    configs = [
+        _cfg("accA", max_trades=5, max_same_direction=2),
+        _cfg("accB", max_trades=5, max_same_direction=2),
+    ]
+    results = _results("BTC", "ETH", "SOL", "XRP")  # all sell => all short
+
+    ex1, acc1, _ = await _run_batch([dict(c) for c in configs], results, width=1)
+    ex2, acc2, _ = await _run_batch([dict(c) for c in configs], results, width=2)
+    assert acc1.per_account_tuples() == acc2.per_account_tuples()
+    # Each account capped at 2 same-direction (short) placements.
+    for aid in ("accA", "accB"):
+        assert len(acc1.placements[aid]) == 2, f"{aid} not capped at max_same_direction=2"
+    # Skipped counts equal across widths (the cap fired identically).
+    s1 = {s["account_id"]: s["trades_skipped"] for s in ex1.get_summaries()}
+    s2 = {s["account_id"]: s["trades_skipped"] for s in ex2.get_summaries()}
+    assert s1 == s2
+
+
+@pytest.mark.asyncio
+async def test_max_same_sector_cap_width_invariant():
+    # The max_same_sector cap (counts existing_symbols in the same sector) must be
+    # width-invariant. Symbols in the same sector beyond the cap are skipped identically
+    # at width 1 and 2 (the cap reads per-account existing_symbols only).
+    configs = [
+        _cfg("accA", max_trades=5, max_same_sector=1),
+        _cfg("accB", max_trades=5, max_same_sector=1),
+    ]
+    results = _results("BTC", "ETH", "SOL", "XRP")
+
+    ex1, acc1, _ = await _run_batch([dict(c) for c in configs], results, width=1)
+    ex2, acc2, _ = await _run_batch([dict(c) for c in configs], results, width=2)
+    # The exact placements depend on the static sector map, but they MUST be identical
+    # across widths (the whole point — the cap is per-account, never cross-account).
+    assert acc1.per_account_tuples() == acc2.per_account_tuples()
+    s1 = {s["account_id"]: (s["trades_executed"], s["trades_skipped"]) for s in ex1.get_summaries()}
+    s2 = {s["account_id"]: (s["trades_executed"], s["trades_skipped"]) for s in ex2.get_summaries()}
+    assert s1 == s2
+
+
 
 
 
