@@ -10,6 +10,7 @@ from backend.services.performance_service import (
     compute_starting_equity, compute_cumulative_curve, compute_drawdown_series,
     build_daily_return_series, compute_risk_ratios, resolve_timeframe_window,
     compute_max_consecutive,
+    compute_daily_pnl, compute_monthly_pnl, compute_drawdown_duration,
 )
 # IMPORTANT (TDD import hygiene): import ONLY the helpers each task has implemented so far.
 # A module-level import of a not-yet-defined name fails at pytest COLLECTION time (before
@@ -216,3 +217,42 @@ class TestTimeframeWindow:
     def test_unknown_raises(self):
         with pytest.raises(ValueError):
             resolve_timeframe_window("7H", datetime(2026, 6, 14, tzinfo=timezone.utc))
+
+
+class TestDailyMonthlyPnl:
+    def test_daily_pnl_grouped_by_utc_day(self):
+        trades = [_t(2.0, datetime(2026, 5, 1, 8, tzinfo=timezone.utc), _id=1),
+                  _t(1.0, datetime(2026, 5, 1, 20, tzinfo=timezone.utc), _id=2),
+                  _t(-1.0, datetime(2026, 5, 2, 9, tzinfo=timezone.utc), _id=3)]
+        daily = compute_daily_pnl(trades)
+        assert daily == [{"date": "2026-05-01", "pnl": pytest.approx(3.0)},
+                         {"date": "2026-05-02", "pnl": pytest.approx(-1.0)}]
+
+    def test_monthly_pnl_with_return_pct(self):
+        trades = [_t(8.0, datetime(2026, 5, 10, tzinfo=timezone.utc), _id=1)]
+        monthly = compute_monthly_pnl(trades, D=160.0)
+        assert monthly == [{"month": "2026-05", "pnl": pytest.approx(8.0),
+                            "return_pct": pytest.approx(5.0)}]
+
+    def test_monthly_return_pct_null_when_D_null(self):
+        trades = [_t(8.0, datetime(2026, 5, 10, tzinfo=timezone.utc), _id=1)]
+        monthly = compute_monthly_pnl(trades, D=None)
+        assert monthly[0]["return_pct"] is None
+
+
+class TestDrawdownDuration:
+    def test_recovered_episode_floored_days(self):
+        # peak at day1 (after +10), trough day2 (-6 -> 4), recover day5 (+8 -> 12 > 10 peak)
+        trades = [_t(10.0, datetime(2026, 5, 1, tzinfo=timezone.utc), _id=1),
+                  _t(-6.0, datetime(2026, 5, 2, tzinfo=timezone.utc), _id=2),
+                  _t(8.0, datetime(2026, 5, 5, tzinfo=timezone.utc), _id=3)]
+        days, recovered = compute_drawdown_duration(trades, D=100.0)
+        assert recovered is True
+        assert days == 4  # 5/1 peak -> 5/5 recovery = 4 days, floored
+
+    def test_unrecovered_uses_last_in_window(self):
+        trades = [_t(10.0, datetime(2026, 5, 1, tzinfo=timezone.utc), _id=1),
+                  _t(-6.0, datetime(2026, 5, 4, tzinfo=timezone.utc), _id=2)]
+        days, recovered = compute_drawdown_duration(trades, D=100.0)
+        assert recovered is False
+        assert days == 3  # 5/1 peak -> 5/4 last trade

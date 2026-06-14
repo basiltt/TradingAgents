@@ -271,3 +271,90 @@ def resolve_timeframe_window(timeframe: str, anchor: datetime) -> tuple[datetime
     if timeframe == "YTD":
         return datetime(anchor.year, 1, 1, tzinfo=timezone.utc), anchor
     raise ValueError(timeframe)  # unreachable
+
+
+def compute_daily_pnl(trades: list[dict]) -> list[dict]:
+    """Sum net_pnl by UTC close date, oldest first."""
+    agg: dict[Any, Decimal] = {}
+    for t in trades:
+        d = t["closed_at"].date()
+        agg[d] = agg.get(d, Decimal(0)) + _npl(t)
+    return [{"date": d.isoformat(), "pnl": float(v)} for d, v in sorted(agg.items())]
+
+
+def compute_monthly_pnl(trades: list[dict], D: float | None,
+                        pct_trades: "list[dict] | None" = None) -> list[dict]:
+    """Monthly grid. Dollar `pnl` sums `net_pnl` over `trades` (every in-scope account).
+    `return_pct = month_pnl / D` is computed from `pct_trades` -- the D-relative subset
+    (accounts that contributed to D) so a null-D account's P&L is never divided by other
+    accounts' capital (spec §4.1). Defaults `pct_trades = trades` when not given.
+    """
+    pct_trades = trades if pct_trades is None else pct_trades
+    agg: dict[str, Decimal] = {}
+    for t in trades:
+        key = t["closed_at"].strftime("%Y-%m")
+        agg[key] = agg.get(key, Decimal(0)) + _npl(t)
+    pct_agg: dict[str, Decimal] = {}
+    for t in pct_trades:
+        key = t["closed_at"].strftime("%Y-%m")
+        pct_agg[key] = pct_agg.get(key, Decimal(0)) + _npl(t)
+    out = []
+    for key, v in sorted(agg.items()):
+        rp = (float(pct_agg.get(key, Decimal(0)) / Decimal(str(D)) * 100)
+              if (D and D > 0) else None)
+        out.append({"month": key, "pnl": float(v), "return_pct": rp})
+    return out
+
+
+def compute_drawdown_duration(trades: list[dict], D: float | None) -> tuple[int | None, bool]:
+    """Duration (floored days) of the single deepest drawdown episode, + recovered flag.
+
+    Walk equity_proxy = D + cum (peak seeded at D). Track the running peak's timestamp;
+    find the trough with the largest drop from its preceding peak; duration = peak->
+    (recovery that reclaims peak, else last trade), floored. Returns (None, True) when
+    there is no drawdown or D is None.
+    """
+    if not trades or D is None:
+        return None, True
+    base = Decimal(str(D))
+    cum = Decimal(0)
+    peak = base
+    peak_ts = trades[0]["closed_at"]  # pre-first-trade peak time ~ first close
+    worst_drop = Decimal(0)
+    worst_peak_ts = None
+    worst_trough_idx = -1
+    for i, t in enumerate(trades):
+        cum += _npl(t)
+        proxy = base + cum
+        if proxy >= peak:
+            peak = proxy
+            peak_ts = t["closed_at"]
+        else:
+            drop = peak - proxy
+            if drop > worst_drop:
+                worst_drop = drop
+                worst_peak_ts = peak_ts
+                worst_trough_idx = i
+    if worst_trough_idx < 0 or worst_peak_ts is None:
+        return 0, True
+    # find recovery: first later trade whose proxy reclaims the worst episode's peak
+    base_peak = None
+    cum2 = Decimal(0)
+    pk = base
+    for i, t in enumerate(trades):
+        cum2 += _npl(t)
+        proxy = base + cum2
+        pk = max(pk, proxy)
+        if i == worst_trough_idx:
+            base_peak = pk
+    recovery_ts = None
+    cum3 = Decimal(0)
+    for i, t in enumerate(trades):
+        cum3 += _npl(t)
+        if i > worst_trough_idx and (base + cum3) >= base_peak:
+            recovery_ts = t["closed_at"]
+            break
+    if recovery_ts is not None:
+        return int((recovery_ts - worst_peak_ts).total_seconds() // 86400), True
+    last_ts = trades[-1]["closed_at"]
+    return int((last_ts - worst_peak_ts).total_seconds() // 86400), False
