@@ -25,6 +25,13 @@
 
 ## Tasks
 
+### Phase-1 review carry-forward (emit-contract constraints — record before TASK-2.2)
+- **EC-1 (from P1R3-F3):** Stage-level `active`/`done` status is emitted ONLY from the orchestrator AFTER the per-account gather joins (single-writer-post-join, same as the persist model). Per-account / per-symbol emits carry `acct_ordinal` + `symbol` but NEVER a terminal STAGE status — else the stepper flips to "done" when the FIRST account finishes while others still run. Wire the existing `accountsDone`/`accountsTotal` ScanStep fields for an "N/M accounts" sub-label.
+- **EC-2 (from P1R3-F4):** `pct` is a SINGLE GLOBAL value emitted from the orchestrator keyed off stage index (init→execute→fill→recheck→cleanup→summaries), NOT per-account (the FE does `Math.max(prev, pct)` which would track the fastest account).
+- **EC-3 (from P1R3-F5):** Compute `_acct_ordinal_map()` ONCE pre-fan-out; pass `ordinals.get(aid)` into each account task (don't recompute per-emit). `_emit_progress` is loop-thread-only — never call it from `asyncio.to_thread`/executor (the manager's `asyncio.Queue` fan-out is loop-bound).
+- **EC-4 (from P1R3-F6):** The RESUME path (`scanner_service.py:~1040`) is a THIRD executor construction (already wired with progress+scan_id in Phase 1). Route it through the extracted `run_post_scan_tail`/`persist_cb` too, or consciously exclude it — so a resumed scan still emits + parallelizes.
+
+
 ### TASK-2.1 — Deterministic mock `BybitClient` for tests (R123, CR-5)
 - **Notes:** A test double recording every placement in a **concurrency-safe, per-account-ordered** structure; deterministic per-symbol market data; deterministic `order_id` = pure fn of `(account_id, symbol)`; configurable per-call latency, 429/10006 injection (rate-aware: emits 10006 if observed call rate exceeds a configured per-account/IP threshold), and a configurable fill model (immediate-full / N-poll-then-full). Self-test: records identically under forced interleaving.
 - **TDD:** the mock's own recording is race-free; rate-aware 10006 fires when un-throttled.

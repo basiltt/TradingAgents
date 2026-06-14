@@ -90,3 +90,91 @@ def test_emit_never_raises_on_no_subscribers():
     ev = mgr.emit("nobody", "a", "A")
     assert ev["scan_id"] == "nobody"
     assert mgr.history("nobody")[0]["stage"] == "a"
+
+
+def test_event_payload_keeps_account_id_server_side():
+    """The manager event carries account_id (for server correlation); the WS
+    boundary strips it. Here we just confirm the field exists for the recorder."""
+    mgr = ScanProgressManager()
+    ev = mgr.emit("s", "execute_batch", "x", account_id="acct-raw", acct_ordinal=2)
+    assert ev["account_id"] == "acct-raw"
+    assert ev["acct_ordinal"] == 2
+    # Free-text label must NOT be on the event payload (no leak).
+    assert "label" not in ev
+
+
+def test_subscribe_late_joiner_gets_terminal_event_on_long_scan():
+    """A late subscriber to a scan whose history exceeds the queue capacity must
+    still receive the NEWEST events incl. the terminal one (newest-biased replay)."""
+    mgr = ScanProgressManager()
+    for i in range(400):
+        mgr.emit("s", f"stage{i}", "x", status="active")
+    mgr.emit("s", "complete", "Done", status="done")
+    q = mgr.subscribe("s")
+    drained = []
+    while not q.empty():
+        drained.append(q.get_nowait())
+    # The terminal event is present despite the long history.
+    assert drained[-1]["stage"] == "complete"
+    assert drained[-1]["status"] == "done"
+
+
+def test_drop_oldest_keeps_newest_exactly():
+    mgr = ScanProgressManager()
+    q = mgr.subscribe("s")
+    for i in range(1000):
+        mgr.emit("s", f"stage{i}", "x")
+    # Queue holds exactly its max, newest retained, oldest dropped.
+    assert q.qsize() == 256
+    items = []
+    while not q.empty():
+        items.append(q.get_nowait())
+    assert items[-1]["stage"] == "stage999"
+    assert items[0]["stage"] == "stage744"
+
+
+def test_terminal_gc_purges_after_retention(monkeypatch):
+    import backend.services.scan_progress_manager as m
+    mgr = m.ScanProgressManager()
+    t = [1000.0]
+    monkeypatch.setattr(m.time, "time", lambda: t[0])
+    mgr.emit("A", "complete", "x", status="done")
+    assert mgr.history("A")
+    # Advance past terminal retention, then emit on B to trigger gc.
+    t[0] = 1000.0 + m._TERMINAL_RETENTION_S + 1
+    mgr.emit("B", "execute_batch", "x")
+    assert mgr.history("A") == []
+    assert mgr.history("B")
+
+
+def test_idle_gc_purges_abandoned_non_terminal_scan(monkeypatch):
+    import backend.services.scan_progress_manager as m
+    mgr = m.ScanProgressManager()
+    t = [1000.0]
+    monkeypatch.setattr(m.time, "time", lambda: t[0])
+    mgr.emit("A", "execute_batch", "x", status="active")  # never reaches terminal
+    # Advance past idle retention, emit on B to trigger gc.
+    t[0] = 1000.0 + m._IDLE_RETENTION_S + 1
+    mgr.emit("B", "execute_batch", "x")
+    assert mgr.history("A") == []  # abandoned scan GC'd by idle age
+
+
+def test_history_truncation_keeps_terminal():
+    import backend.services.scan_progress_manager as m
+    mgr = m.ScanProgressManager()
+    for i in range(m._MAX_HISTORY + 50):
+        mgr.emit("s", f"stage{i}", "x", status="active")
+    mgr.emit("s", "complete", "Done", status="done")
+    hist = mgr.history("s")
+    assert len(hist) == m._MAX_HISTORY
+    assert hist[-1]["stage"] == "complete"
+
+
+def test_terminal_at_only_for_real_terminal():
+    import backend.services.scan_progress_manager as m
+    mgr = m.ScanProgressManager()
+    mgr.emit("s", "execute_batch", "x", status="done")  # done but not a terminal stage
+    assert "s" not in mgr._terminal_at
+    mgr.emit("s", "complete", "x", status="done")
+    assert "s" in mgr._terminal_at
+

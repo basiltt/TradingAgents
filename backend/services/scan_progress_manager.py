@@ -54,10 +54,17 @@ _MAX_HISTORY = 500
 # Keep a finished scan's history this long after its terminal event so a client
 # that connects just after completion still sees the final state (seconds).
 _TERMINAL_RETENTION_S = 60.0
+# Drop a non-terminal scan's history this long after its LAST event, so a tail
+# that raised before emitting "complete" cannot leak its history forever. Sized
+# well above the longest plausible tail (a multi-account fleet under rate limits).
+_IDLE_RETENTION_S = 20 * 60.0
 # Per-subscriber queue size (drop-oldest on overflow; history covers catch-up).
 _SUBSCRIBER_QUEUE_MAX = 256
 
-_TERMINAL_STAGES = ("complete", "failed", "cancelled")
+# Stages that mark the end of the post-scan tail. Public so the WS router imports
+# THIS (single source of truth) rather than re-declaring its own copy.
+TERMINAL_STAGES = ("complete", "failed", "cancelled")
+_TERMINAL_STAGES = TERMINAL_STAGES  # internal alias
 
 
 class ScanProgressManager:
@@ -68,6 +75,10 @@ class ScanProgressManager:
         self._history: dict[str, list[dict[str, Any]]] = {}
         self._seq: dict[str, int] = {}
         self._terminal_at: dict[str, float] = {}
+        # Last-activity wall-clock per scan, so an abandoned non-terminal scan
+        # (tail raised before "complete") is still GC'd by idle age and can't
+        # leak its history forever.
+        self._last_activity: dict[str, float] = {}
 
     def emit(
         self,
@@ -126,6 +137,7 @@ class ScanProgressManager:
         if len(hist) > _MAX_HISTORY:
             # Keep the most recent events; the terminal event (always last) is retained.
             del hist[: len(hist) - _MAX_HISTORY]
+        self._last_activity[scan_id] = time.time()
         if status in ("done", "failed", "cancelled") and stage in _TERMINAL_STAGES:
             self._terminal_at[scan_id] = time.time()
         # Fan out to live subscribers (drop-oldest on a full queue — history covers
@@ -144,9 +156,16 @@ class ScanProgressManager:
 
     def subscribe(self, scan_id: str) -> asyncio.Queue:
         """Subscribe to a scan's events. The returned queue is PRE-LOADED with the
-        scan's history so a late subscriber catches up before live events arrive."""
+        scan's history so a late subscriber catches up before live events arrive.
+
+        For a very long scan whose history exceeds the queue capacity, the NEWEST
+        events are kept (including the terminal one) rather than the oldest — a late
+        joiner must see the final state, not the first N frames."""
         q: asyncio.Queue = asyncio.Queue(maxsize=_SUBSCRIBER_QUEUE_MAX)
-        for ev in self._history.get(scan_id, ()):
+        hist = self._history.get(scan_id, ())
+        # Keep at most the queue capacity, newest-biased so the terminal event survives.
+        replay = hist[-_SUBSCRIBER_QUEUE_MAX:] if len(hist) > _SUBSCRIBER_QUEUE_MAX else hist
+        for ev in replay:
             try:
                 q.put_nowait(ev)
             except asyncio.QueueFull:
@@ -166,14 +185,23 @@ class ScanProgressManager:
         return list(self._history.get(scan_id, ()))
 
     def _gc(self) -> None:
-        if not self._terminal_at:
+        if not self._last_activity:
             return
         now = time.time()
-        expired = [
-            sid for sid, t in self._terminal_at.items()
-            if now - t > _TERMINAL_RETENTION_S
-        ]
+        expired: set[str] = set()
+        # Terminal scans: drop a short retention window after completion.
+        for sid, t in self._terminal_at.items():
+            if now - t > _TERMINAL_RETENTION_S:
+                expired.add(sid)
+        # Non-terminal / abandoned scans: drop by idle age so a tail that raised
+        # before "complete" cannot leak its history forever — but NEVER while a
+        # subscriber is still connected (purging would reset seq mid-stream and
+        # make the client drop subsequent events as stale).
+        for sid, t in self._last_activity.items():
+            if now - t > _IDLE_RETENTION_S and not self._subscribers.get(sid):
+                expired.add(sid)
         for sid in expired:
             self._history.pop(sid, None)
             self._seq.pop(sid, None)
             self._terminal_at.pop(sid, None)
+            self._last_activity.pop(sid, None)

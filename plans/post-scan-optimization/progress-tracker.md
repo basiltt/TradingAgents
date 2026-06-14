@@ -41,15 +41,19 @@
 | 23 | 07:30 | Phase 0 review R3 (5 agents) | DONE | Found CRITICAL residual both backend+integration agents flagged: detection-time RateGateBanAbort raise (bybit_client:247) was LANE-INDEPENDENT → first background loop to detect 10018 crashes. FIXED: lane-gated (order→RateGateBanAbort, background→catchable BybitAPIError); ABA generation guard on clear_ban; bare "banned" removed; probe window 30s≥timeout. +tests. 126 rate-gate + 152 scanner/accounts green. |
 | 24 | 08:00 | Phase 0 review fixes commit | DONE | c53c5a9 — 3 review rounds complete, all Critical/High fixed. Phase 0 CLOSED. |
 | 25 | 08:05 | Phase 1 impl (TASK-1.1..1.8) | DONE | TDD. Backend: scan_progress_manager.py (per-scan pub/sub), ws_scan_progress.py (strict-origin + scan-existence + identical-close), ScanAutoTradeProgressEvent, executor progress sink (None-safe fail-open), scanner+manual wiring, auto_trade_config_count serializer field, main.py manager+router. Frontend: api/ws.ts (shared base + close-code classifier), useScanAutoTradeProgressWS hook, PostScanExecutionPanel, ScannerPage poll-through-tail + active predicate + single-renderer. 17 backend + 7 hook tests green; 1062 frontend + 136 scanner/auto-trade regression green; prod build OK. |
-| 26 | 10:35 | Phase 1 commit | IN_PROGRESS | — |
+| 26 | 10:35 | Phase 1 review R1 (5 agents) | DONE | backend/frontend/security/integration/qa. Key: account_id leaked over WS (latent); panel terminal state was WS-only (permanent grey stepper on cold-load); postScanTailActive null-completed_at polls forever; manager replay drops terminal on long scans; no idle GC. ALL FIXED: WS wire allow-list (strips account_id/label); poll-derived `done` prop; keep scanId always; WS-terminal→invalidate; newest-biased replay; idle GC; 3-state dry_run. +fail-open _emit_progress test + WS allow-list test + manager GC/replay tests + postScanTailActive test. 150 backend + 1070 frontend green. |
+| 27 | 10:55 | Phase 1 review R2 (5 agents) | DONE | Verified R1 fixes hold. New: panel grey-stepper bug (showStepper+showPersisted both true on cold-load); empty-finished flicker at WS-terminal; manager idle-GC seq-reset with live subscriber; acct_ordinal seam (must freeze canonical sorted-distinct derivation NOW for Phase 2). FIXED: showStepper gated !showPersisted; showEmptyFinished keys on poll-done; idle-GC subscriber guard; _acct_ordinal_map (sorted distinct, stamped on get_summaries); TERMINAL_STAGES single source; hook stale-connected + terminal-status alignment; cooloff self-stop. Manual-rerun WS DEFERRED per spec R165g. +panel component tests + acct_ordinal + wire-sync tests. 37+120 backend + 21 frontend green. |
+| 28 | 11:05 | Phase 1 review R3 (3 agents) | DONE | backend/security CONVERGED; frontend found 1 new MEDIUM (cooloff banner freezes at ~1m — R2 self-stop regression) FIXED + tested; architecture PHASE 1 DONE + PHASE 2 READY (recorded EC-1..4 emit-contract constraints in 03-phase2 plan). 144 backend + 157 frontend green. |
+| 29 | 11:25 | Phase 1 review COMPLETE | DONE | 3 rounds converged. |
+| 30 | 11:30 | Phase 1 review fixes commit | IN_PROGRESS | — |
 
 ## Implementation Progress
 
 | Phase | Status | Commit | Notes |
 |-------|--------|--------|-------|
 | Phase 0 (rate-gate) | ✅ DONE (3 review rounds) | 927ee08, c53c5a9 | Ban breaker money-safety |
-| Phase 1 (WS) | IMPL DONE, review pending | — | Manager+endpoint+hook+panel; poll-through-tail fix; live+persisted views |
-| Phase 2 (parallelism) | PENDING | — | next |
+| Phase 1 (WS) | ✅ DONE (3 review rounds) | (committing) | Live status; account_id wire-stripped; poll-derived done; acct_ordinal seam; Phase-2-ready |
+| Phase 2 (parallelism) | PENDING | — | next; EC-1..4 emit constraints recorded |
 | Phase 3 (UX) | PENDING | — | — |
 
 **Deferred to Phase 3 (tracked):** admin-endpoint trust-boundary hardening (TASK-3.3), per-tail feasibility auto-reduce refinement, P0-F5 deque eviction (low), P0-F8 sync-lane reservation (low), P0-F11 WS-accounting confirmation (low).

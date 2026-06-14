@@ -63,6 +63,7 @@ function isProgressEvent(m: unknown): m is ScanAutoTradeProgressEvent {
     e.type === "scan_auto_trade_progress" &&
     typeof e.stage === "string" &&
     typeof e.status === "string" &&
+    typeof e.scan_id === "string" &&
     typeof e.seq === "number"
   );
 }
@@ -114,8 +115,15 @@ export function useScanAutoTradeProgressWS(
     setOrders([]);
     setPct(null);
     setTerminal(false);
+    setConnected(false);
     setCooloffUntil(null);
   }, [scanId]);
+
+  // When the socket is gated off (active=false) without a scan change, clear the
+  // connection flag so a non-terminal, capped-out tail doesn't show a stale "Live".
+  React.useEffect(() => {
+    if (!active) setConnected(false);
+  }, [active]);
 
   React.useEffect(() => {
     mounted.current = true;
@@ -186,7 +194,9 @@ export function useScanAutoTradeProgressWS(
 
       if (typeof ev.cooloff_until === "number") setCooloffUntil(ev.cooloff_until);
 
-      if (TERMINAL_STAGES.has(ev.stage) && ev.status !== "active") {
+      // Terminal only on a true terminal stage + terminal status (matches the
+      // backend's terminal detection: done/failed/cancelled).
+      if (TERMINAL_STAGES.has(ev.stage) && (ev.status === "done" || ev.status === "failed" || ev.status === "cancelled")) {
         setTerminal(true);
       }
     }

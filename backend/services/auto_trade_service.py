@@ -880,11 +880,27 @@ class AutoTradeExecutor:
 
             return executions
 
+    def _acct_ordinal_map(self) -> Dict[str, int]:
+        """Canonical, refresh-STABLE per-scan ordinal for each distinct account_id
+        (PR2-7). The ordinal is the index into the SORTED list of distinct
+        account_ids, so it does not depend on config order (which `refresh_configs`
+        can change mid-tail). The SAME helper is used by `get_summaries` here and by
+        the Phase-2 live-progress emit sites, so the opaque `acct#N` handle the UI
+        shows always maps to the same account on both the live and terminal paths.
+        Starts at 1 (acct#1 reads better than acct#0)."""
+        distinct = sorted({s.config.get("account_id", "") for s in self._state.values() if s.config.get("account_id")})
+        return {aid: i + 1 for i, aid in enumerate(distinct)}
+
     def get_summaries(self) -> List[Dict[str, Any]]:
-        """Return per-account execution summaries (counts, stop reason, rule ids, executions)."""
+        """Return per-account execution summaries (counts, stop reason, rule ids, executions).
+
+        Each row carries `acct_ordinal` (the canonical per-scan handle, PR2-7) so the
+        live WS view's opaque `acct#N` rows reconcile to these terminal rows."""
+        ordinals = self._acct_ordinal_map()
         return [
             {
                 "account_id": state.config["account_id"],
+                "acct_ordinal": ordinals.get(state.config.get("account_id", "")),
                 "trades_executed": state.trades_executed,
                 "trades_failed": state.trades_failed,
                 "trades_skipped": state.trades_skipped,

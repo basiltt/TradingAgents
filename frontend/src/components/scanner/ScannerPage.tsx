@@ -59,12 +59,14 @@ const POST_SCAN_TAIL_MAX_MS = 10 * 60 * 1000;
 /**
  * Is the post-scan auto-trade tail plausibly still executing? True when the scan
  * has auto-trade configs, has reached a terminal scan status, but has not yet
- * landed its `auto_trade_summaries` (which are written only at tail finalization)
- * — within an elapsed upper bound. Drives both the poll-through-tail and the
- * WS-open gate. The placement steps run while status is still "running", so the
- * WS is opened from the running phase onward (see the `active` flag below).
+ * landed its `auto_trade_summaries` (written only at tail finalization) — within
+ * an elapsed upper bound. Drives the poll-through-tail and the WS-open gate. The
+ * placement steps run while status is still "running", so the WS is opened from
+ * the running phase onward (see the `active` flag below).
+ *
+ * Exported for unit testing.
  */
-function postScanTailActive(s: ScanStatus | undefined): boolean {
+export function postScanTailActive(s: ScanStatus | undefined): boolean {
   if (!s) return false;
   const configured = (s.auto_trade_config_count ?? 0) > 0;
   if (!configured) return false;
@@ -72,11 +74,11 @@ function postScanTailActive(s: ScanStatus | undefined): boolean {
   if (summariesLanded) return false;
   const terminal = s.status === "completed" || s.status === "cancelled" || s.status === "failed";
   if (!terminal) return false;
-  // Bound by elapsed time since completion.
-  if (s.completed_at) {
-    const elapsed = Date.now() - new Date(s.completed_at).getTime();
-    if (Number.isFinite(elapsed) && elapsed > POST_SCAN_TAIL_MAX_MS) return false;
-  }
+  // Bound by elapsed time since completion (fall back to started_at). If neither
+  // timestamp is usable, treat the tail as inactive rather than polling forever.
+  const base = Date.parse(s.completed_at ?? "") || Date.parse(s.started_at ?? "");
+  if (!Number.isFinite(base) || base === 0) return false;
+  if (Date.now() - base > POST_SCAN_TAIL_MAX_MS) return false;
   return true;
 }
 
@@ -547,9 +549,26 @@ export function ScannerPage() {
   // summaries have landed yet (bounded by postScanTailActive's elapsed cap).
   const hasAutoTradeConfigs = (scan?.auto_trade_config_count ?? 0) > 0;
   const wsActive = !!scan && hasAutoTradeConfigs && (isRunning || postScanTailActive(scan));
-  const scanProgress = useScanAutoTradeProgressWS(wsActive ? activeScanId ?? undefined : undefined, wsActive);
+  // Keep passing the scanId always; gate the socket purely on `active` so that
+  // when the tail finishes (wsActive flips false) the hook's scanId-change reset
+  // does NOT wipe the final stepper/account state (it stays frozen for display).
+  const scanProgress = useScanAutoTradeProgressWS(activeScanId ?? undefined, wsActive);
   // Show the live panel for any auto-trade-configured scan (live OR persisted).
   const showPostScanPanel = hasAutoTradeConfigs;
+  // Authoritative "the tail is done" signal from the POLL (not the WS), so the
+  // panel renders the persisted view + a "Done" badge on cold-load / WS-down /
+  // terminal instead of a permanent all-pending stepper.
+  const postScanDone = isDone && (scan?.auto_trade_summaries?.length ?? 0) > 0;
+
+  // On the WS terminal rising edge, immediately refetch the scan so the
+  // authoritative persisted results land without waiting for the next poll tick.
+  const prevWsTerminal = useRef(false);
+  useEffect(() => {
+    if (scanProgress.terminal && !prevWsTerminal.current && activeScanId) {
+      queryClient.invalidateQueries({ queryKey: ["scan", activeScanId] });
+    }
+    prevWsTerminal.current = scanProgress.terminal;
+  }, [scanProgress.terminal, activeScanId, queryClient]);
 
   // Results view: one-shot switch to the Results tab on the running→completed rising
   // edge, then the user's manual tab choice wins. Re-armed when a new scan begins.
@@ -1250,6 +1269,7 @@ export function ScannerPage() {
                   pct={scanProgress.pct}
                   connected={scanProgress.connected}
                   terminal={scanProgress.terminal}
+                  done={postScanDone}
                   cooloffUntil={scanProgress.cooloffUntil}
                   results={scan.auto_trade_results}
                   summaries={scan.auto_trade_summaries}

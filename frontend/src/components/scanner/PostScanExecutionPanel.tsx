@@ -63,8 +63,8 @@ const SIDE_TONE: Record<string, string> = {
   sell: "text-[var(--neu-danger)]",
 };
 
-function ConnectionBadge({ connected, terminal }: { connected: boolean; terminal: boolean }) {
-  const [label, dot] = terminal
+function ConnectionBadge({ connected, terminal, done }: { connected: boolean; terminal: boolean; done: boolean }) {
+  const [label, dot] = (terminal || done)
     ? ["Done", "bg-[var(--neu-text-muted)]"]
     : connected
       ? ["Live", "bg-[var(--neu-accent)] animate-pulse"]
@@ -88,6 +88,11 @@ export interface PostScanExecutionPanelProps {
   pct: number | null;
   connected: boolean;
   terminal: boolean;
+  /** Authoritative "the tail is finished" signal from the 3s poll (status terminal
+   *  AND summaries landed). Independent of the WS, so a cold-loaded / WS-down /
+   *  finished scan renders the persisted view + a "Done" badge instead of a
+   *  permanent all-pending stepper. */
+  done: boolean;
   cooloffUntil: number | null;
   /** Authoritative persisted results from the 3s poll (source of truth on terminal). */
   results?: AutoTradeResult[];
@@ -100,9 +105,9 @@ export interface PostScanExecutionPanelProps {
  * Live post-scan auto-trade execution panel (Phase 1).
  *
  * While the tail runs, renders the WS-driven stepper + per-account rows + order
- * feed. When no live events have arrived yet but the poll has persisted results
- * (cold-load / WS-down / terminal), it renders the authoritative persisted view —
- * so the panel converges correctly whether reached live or cold.
+ * feed. When the tail is finished (poll-derived `done`) or no live events have
+ * arrived (cold-load / WS-down), it renders the authoritative persisted view — so
+ * the panel converges correctly whether reached live or cold.
  */
 export function PostScanExecutionPanel({
   steps,
@@ -111,6 +116,7 @@ export function PostScanExecutionPanel({
   pct,
   connected,
   terminal,
+  done,
   cooloffUntil,
   results,
   summaries,
@@ -118,12 +124,37 @@ export function PostScanExecutionPanel({
 }: PostScanExecutionPanelProps) {
   const hasLive = steps.length > 0 || accounts.length > 0 || orders.length > 0;
   const persisted = results ?? [];
+  // The tail is finished if the poll says so OR a WS terminal arrived.
+  const finished = done || terminal;
+  // Show the authoritative persisted view once finished (or whenever there's no
+  // live stream but persisted results exist). Show the live stepper/feed only
+  // while the tail is actively streaming and not yet finished.
+  const showPersisted = (finished || !hasLive) && persisted.length > 0;
+  const showLive = hasLive && !finished;
+  // Stepper only while genuinely streaming — never alongside the persisted grid
+  // (which would show a grey all-pending pipeline over real results on a
+  // cold-load where the poll returned results before summaries).
+  const showStepper = !finished && !showPersisted && (hasLive || (connected && !done));
+  // The "no trades placed" message is gated on the POLL-authoritative `done`
+  // (not the WS `terminal`), so a scan that DID trade can't briefly flash
+  // "No trades placed" in the window between the WS terminal and the refetch.
+  const showEmptyFinished = done && !showPersisted && !showLive;
 
   // Cooloff countdown (a confirmed IP-ban pause, distinct from a micro-throttle).
   const [now, setNow] = React.useState(() => Date.now());
   React.useEffect(() => {
-    if (!cooloffUntil) return;
-    const id = setInterval(() => setNow(Date.now()), 1000);
+    if (!cooloffUntil || cooloffUntil * 1000 <= Date.now()) return;
+    const id = setInterval(() => {
+      // Self-stop once the cooloff elapses so we don't re-render every second
+      // forever. Commit a final `now` PAST the deadline first, so cooloffSecs
+      // resolves to 0 and the banner hides (otherwise it can freeze at "~1m").
+      if (!cooloffUntil || cooloffUntil * 1000 <= Date.now()) {
+        setNow(Date.now());
+        clearInterval(id);
+        return;
+      }
+      setNow(Date.now());
+    }, 1000);
     return () => clearInterval(id);
   }, [cooloffUntil]);
   const cooloffSecs = cooloffUntil ? Math.max(0, Math.round(cooloffUntil - now / 1000)) : 0;
@@ -135,10 +166,10 @@ export function PostScanExecutionPanel({
           Auto-trade execution
         </p>
         <div className="flex items-center gap-2">
-          {typeof pct === "number" && !terminal ? (
+          {typeof pct === "number" && !finished ? (
             <span className="text-[11px] font-mono tabular-nums text-[var(--neu-text-muted)]">{pct}%</span>
           ) : null}
-          <ConnectionBadge connected={connected} terminal={terminal} />
+          <ConnectionBadge connected={connected} terminal={terminal} done={done} />
         </div>
       </div>
 
@@ -153,8 +184,8 @@ export function PostScanExecutionPanel({
         </div>
       ) : null}
 
-      {/* Live stepper (pre-seeded with the full pipeline shape). */}
-      {hasLive || !terminal ? (
+      {/* Live stepper — only while actively streaming (hidden once finished). */}
+      {showStepper ? (
         <div className="space-y-0.5">
           {STAGE_ORDER.map((s) => (
             <StepRow key={s.key} label={s.label} status={stepStatus(steps, s.key)} />
@@ -163,7 +194,7 @@ export function PostScanExecutionPanel({
       ) : null}
 
       {/* Per-account live rows (only while streaming). */}
-      {accounts.length > 0 ? (
+      {showLive && accounts.length > 0 ? (
         <div className="space-y-2 border-t border-[color:var(--neu-stroke-soft)] pt-3">
           {accounts.map((a) => (
             <div
@@ -173,13 +204,17 @@ export function PostScanExecutionPanel({
               <span className="font-mono font-semibold text-[var(--neu-text-strong)]">
                 acct#{a.acctOrdinal}
               </span>
-              {a.dryRun ? (
+              {a.dryRun === true ? (
                 <span className="rounded-full border border-border/60 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                   dry-run
                 </span>
-              ) : (
+              ) : a.dryRun === false ? (
                 <span className="rounded-full border border-[color-mix(in_oklch,var(--neu-success)_30%,var(--neu-stroke-soft))] px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-success)]">
                   live
+                </span>
+              ) : (
+                <span className="rounded-full border border-border/40 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/60">
+                  —
                 </span>
               )}
               <span className="text-[var(--neu-success)]">{a.tradesExecuted}✓</span>
@@ -195,8 +230,8 @@ export function PostScanExecutionPanel({
         </div>
       ) : null}
 
-      {/* Live order feed (newest first, bounded). */}
-      {orders.length > 0 ? (
+      {/* Live order feed (newest first, bounded) — only while streaming. */}
+      {showLive && orders.length > 0 ? (
         <div className="custom-scrollbar max-h-40 space-y-1.5 overflow-y-auto border-t border-[color:var(--neu-stroke-soft)] pt-3 pr-1">
           {orders.map((o) => (
             <div key={o.seq} className="flex items-center gap-2 text-xs">
@@ -217,8 +252,8 @@ export function PostScanExecutionPanel({
         </div>
       ) : null}
 
-      {/* Persisted / terminal view: when no live events but the poll has results. */}
-      {!hasLive && persisted.length > 0 ? (
+      {/* Persisted / terminal view: authoritative results from the poll. */}
+      {showPersisted ? (
         <div className="space-y-2">
           <div className="grid grid-cols-2 gap-3">
             <div className={cn(SECTION, "p-3 text-center")}>
@@ -255,8 +290,17 @@ export function PostScanExecutionPanel({
         </div>
       ) : null}
 
-      {/* Account-status warnings from the persisted summaries (preserved safety surface). */}
-      {(summaries ?? []).some((s) => s.stopped_reason) ? (
+      {/* Empty finished state: configured but no trades placed (poll-authoritative). */}
+      {showEmptyFinished ? (
+        <p className="py-2 text-center text-[11px] text-[var(--neu-text-muted)]">
+          No trades placed (see account status for reasons).
+        </p>
+      ) : null}
+
+      {/* Account-status warnings — rendered from the persisted summaries when
+          finished, else from the live rows above. Avoids double-rendering by
+          only showing here when NOT in the live phase. */}
+      {!showLive && (summaries ?? []).some((s) => s.stopped_reason) ? (
         <div className="space-y-1.5 border-t border-[color:var(--neu-stroke-soft)] pt-3">
           {(summaries ?? [])
             .filter((s) => s.stopped_reason)

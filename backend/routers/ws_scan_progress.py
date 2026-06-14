@@ -22,15 +22,31 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from urllib.parse import urlparse
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+
+from backend.services.scan_progress_manager import TERMINAL_STAGES as _TERMINAL_STAGES
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-_TERMINAL_STAGES = ("complete", "failed", "cancelled")
+# Explicit allow-list of fields that may cross the wire. The raw internal
+# `account_id` is DELIBERATELY excluded — the UI uses the opaque per-scan
+# `acct_ordinal` instead — so a real trading-account id can never be disclosed
+# to a subscriber regardless of what any emitter passes. Free-text label/detail
+# are likewise never forwarded (the manager already keeps `label` server-side).
+_WIRE_FIELDS = frozenset({
+    "type", "schema_version", "scan_id", "stage", "status", "pct", "seq", "ts",
+    "acct_ordinal", "symbol", "side", "phase", "reason_code",
+    "trades_executed", "trades_failed", "trades_skipped",
+    "dry_run", "cooloff_until", "substatus",
+})
+
+
+def _project_for_wire(event: dict) -> dict:
+    """Strip an event down to the allow-listed wire fields (drops account_id etc.)."""
+    return {k: v for k, v in event.items() if k in _WIRE_FIELDS}
 
 
 def _check_origin(websocket: WebSocket) -> bool:
@@ -87,7 +103,7 @@ async def scan_auto_trade_progress_ws(websocket: WebSocket, scan_id: str) -> Non
         while True:
             try:
                 event = await asyncio.wait_for(queue.get(), timeout=30.0)
-                await websocket.send_json(event)
+                await websocket.send_json(_project_for_wire(event))
                 # Terminal stage — flush then close cleanly so the client's
                 # reconnect logic doesn't keep re-opening a finished scan.
                 if event.get("stage") in _TERMINAL_STAGES and event.get("status") in ("done", "failed", "cancelled"):
