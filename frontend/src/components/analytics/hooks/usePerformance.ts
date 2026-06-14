@@ -10,6 +10,7 @@ export const performanceKeys = {
     ["performance-trades", scope, timeframe, sort, dir] as const,
   signalSummary: (scope: string) => ["performance-signals", "summary", scope] as const,
   signalWinRate: (scope: string) => ["performance-signals", "win-rate", scope] as const,
+  live: (scope: string) => ["performance-live", scope] as const,
 };
 
 export function usePerformanceOverview(scope: string, timeframe: string) {
@@ -53,5 +54,15 @@ export function useSignalWinRate(scope: string) {
     queryKey: performanceKeys.signalWinRate(scope),
     queryFn: ({ signal }) => signalAnalyticsApi.winRate(scope, signal),
     staleTime: 60_000,
+  });
+}
+
+export function usePerformanceLive(scope: string, enabled = true) {
+  return useQuery({
+    queryKey: performanceKeys.live(scope),
+    queryFn: ({ signal }) => performanceApi.getLive(scope, signal),
+    enabled,
+    staleTime: 0,
+    refetchInterval: 15_000, // poll while mounted; key is excluded from persistence (App.tsx)
   });
 }

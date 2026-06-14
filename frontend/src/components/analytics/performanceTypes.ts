@@ -114,3 +114,31 @@ export interface SignalSummary {
 }
 export interface WinRatePoint { date: string | null; win_rate: number; trade_number: number; }
 export type SignalWinRate = WinRatePoint[];
+
+// ── Live tab (Phase 5) ───────────────────────────────────────────────────────
+export interface LivePosition {
+  account_id: string;
+  symbol: string;
+  side: string;
+  size: number;
+  leverage: number;
+  entry: number;
+  unrealized_pnl: number;
+  unrealized_pnl_pct: number | null;
+}
+export interface AccountTile {
+  account_id: string;
+  label: string;
+  type: string | null;
+  equity: number | null;
+  today_pnl: number | null;
+  positions_count: number;
+  error: string | null;
+}
+export interface SectorConcentration { sector: string; exposure_pct: number; positions: number; }
+export interface PerformanceLive {
+  positions: LivePosition[];
+  account_tiles: AccountTile[];
+  sector_concentration: SectorConcentration[];
+  degraded: boolean;
+}
