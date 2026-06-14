@@ -48,3 +48,41 @@ def test_overview_service_missing_503():
     client = TestClient(app)
     r = client.get("/api/v1/performance/overview?scope=all&timeframe=ALL")
     assert r.status_code == 503
+
+
+def test_trades_breakdown_returns_payload():
+    svc = MagicMock()
+    svc.compute_breakdowns_for = AsyncMock(return_value={
+        "by_symbol": [], "by_strategy": [], "by_close_reason": [],
+        "pnl_distribution": [], "hold_time_buckets": [],
+        "meta": {"strategy_legacy_approximate": False},
+    })
+    client = TestClient(_app(svc))
+    r = client.get("/api/v1/performance/trades-breakdown?scope=all&timeframe=1M")
+    assert r.status_code == 200
+    assert "by_symbol" in r.json()
+
+
+def test_trades_breakdown_unknown_timeframe_422():
+    svc = MagicMock()
+    client = TestClient(_app(svc))
+    r = client.get("/api/v1/performance/trades-breakdown?scope=all&timeframe=ZZ")
+    assert r.status_code == 422
+
+
+def test_trades_page_returns_rows_and_cursor():
+    svc = MagicMock()
+    svc.compute_trades_page = AsyncMock(return_value={
+        "rows": [{"id": "t1", "symbol": "BTCUSDT", "side": "Buy", "net_pnl": 5.0,
+                  "net_pnl_pct": 5.0, "close_reason": "take_profit",
+                  "opened_at": None, "closed_at": None, "hold_hours": None}],
+        "cursor": (5.0, "t1"), "has_more": True,
+    })
+    client = TestClient(_app(svc))
+    r = client.get("/api/v1/performance/trades?scope=all&timeframe=ALL")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["rows"][0]["id"] == "t1"
+    assert body["has_more"] is True
+    # the internal tuple cursor is encoded to an opaque string for the client
+    assert isinstance(body["cursor"], str)
