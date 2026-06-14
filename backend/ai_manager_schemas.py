@@ -20,6 +20,12 @@ class AIManagerConfig(BaseModel):
     min_position_age_s: int = Field(default=300, ge=60, le=3600)
     confidence_threshold: float = Field(default=0.7, ge=0.3, le=0.95)
     max_single_decision_loss_pct: float = Field(default=3.0, ge=0.5, le=10.0)
+    # FIX-003: HARD per-position loss cap. A position whose unrealized loss exceeds
+    # this % of equity is force-closed deterministically (no LLM), regardless of
+    # velocity/urgency/circuit-breaker state — capital preservation for a big-but-calm
+    # loser that the soft max_single_decision_loss_pct skip would otherwise abandon.
+    # Must sit ABOVE the soft cap. None disables the hard-close backstop.
+    max_position_loss_pct: Optional[float] = Field(default=8.0, ge=1.0, le=50.0)
     dry_run: bool = False
     grace_period_s: int = Field(default=0, ge=0, le=30)
     excluded_symbols: List[
@@ -130,6 +136,7 @@ class AIManagerConfigPatch(BaseModel):
     min_position_age_s: Optional[int] = Field(default=None, ge=60, le=3600)
     confidence_threshold: Optional[float] = Field(default=None, ge=0.3, le=0.95)
     max_single_decision_loss_pct: Optional[float] = Field(default=None, ge=0.5, le=10.0)
+    max_position_loss_pct: Optional[float] = Field(default=None, ge=1.0, le=50.0)  # FIX-003 hard cap
     dry_run: Optional[bool] = None
     grace_period_s: Optional[int] = Field(default=None, ge=0, le=30)
     excluded_symbols: Optional[

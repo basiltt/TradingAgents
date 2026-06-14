@@ -11,6 +11,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from backend.schemas import PROVIDER_API_KEY_MAP, FilterPreviewResponse, ScanRequest, ScanResultItem
+from backend.services.bybit_rate_gate import RateGateBanAbort
 from backend.services.scanner_service import ScannerBusyError
 
 logger = logging.getLogger(__name__)
@@ -162,44 +163,65 @@ async def trigger_auto_trade(request: Request, scan_id: str):
     """Trigger auto-trade execution on a completed scan using its stored auto_trade_configs."""
     _validate_scan_id(scan_id)
 
-    if scan_id in _in_flight_auto_trades:
+    # Atomic claim BEFORE any await — set.add under the GIL is atomic and there is no
+    # await between the membership test and the add, so two concurrent POSTs for the
+    # same scan can't both pass (closes the prior check-then-later-add TOCTOU, H1). The
+    # central single-flight also rejects an overlapping scheduled auto-tail.
+    from backend.services import post_scan_concurrency as _psc
+    if scan_id in _in_flight_auto_trades or _psc.is_tail_in_flight(scan_id):
         raise HTTPException(status_code=409, detail="Auto trade already in progress for this scan")
-
-    db = request.app.state.db
-    accounts_service = getattr(request.app.state, "accounts_service", None)
-    if not accounts_service:
-        raise HTTPException(status_code=503, detail="Accounts service not available")
-
-    close_svc = getattr(request.app.state, "close_positions_service", None)
-    ai_manager_service = getattr(request.app.state, "ai_manager_service", None)
-    sector_service = getattr(request.app.state, "sector_service", None)
-    scanner_service = request.app.state.scanner_service
-
-    # Load raw scan from DB (includes config with auto_trade_configs)
-    scan = await db.get_scan(scan_id)
-    if not scan:
-        raise HTTPException(status_code=404, detail="Scan not found")
-    if scan.get("status") != "completed":
-        raise HTTPException(status_code=400, detail="Scan is not completed")
-
-    # Check existing auto_trade_results (prevent double-execution)
-    # Note: re-execution is allowed — the executor's built-in guards
-    # (existing_symbols, skip_if_positions_open) prevent actual duplicate trades.
-    # Results are overwritten with the latest execution.
-
-    # Extract auto_trade_configs from stored config
-    config = scan.get("config", {})
-    if isinstance(config, str):
-        config = _json.loads(config)
-    auto_configs = config.get("auto_trade_configs")
-    if not auto_configs:
-        raise HTTPException(status_code=422, detail="No auto_trade_configs found in scan config")
-
-    results = scan.get("results", [])
-    if not results:
-        raise HTTPException(status_code=400, detail="Scan has no results")
-
     _in_flight_auto_trades.add(scan_id)
+
+    def _reject(status_code: int, detail: str) -> HTTPException:
+        # Build a validation-failure exception. The claim is released by the single
+        # `except BaseException` net below (which catches this HTTPException too), so
+        # there is exactly ONE place that owns the release — no duplicated discard.
+        return HTTPException(status_code=status_code, detail=detail)
+
+    # Any raise between the claim above and the task spawn below (an HTTPException from
+    # _reject, OR an unexpected error from db.get_scan / json.loads / a missing app.state
+    # attr) must release the claim — otherwise the scan_id leaks in _in_flight_auto_trades
+    # forever and the scan can never be manually re-run until a process restart (H1/R2).
+    try:
+        db = request.app.state.db
+        accounts_service = getattr(request.app.state, "accounts_service", None)
+        if not accounts_service:
+            raise _reject(503, "Accounts service not available")
+
+        close_svc = getattr(request.app.state, "close_positions_service", None)
+        ai_manager_service = getattr(request.app.state, "ai_manager_service", None)
+        sector_service = getattr(request.app.state, "sector_service", None)
+        scanner_service = request.app.state.scanner_service
+
+        # Load raw scan from DB (includes config with auto_trade_configs)
+        scan = await db.get_scan(scan_id)
+        if not scan:
+            raise _reject(404, "Scan not found")
+        if scan.get("status") != "completed":
+            raise _reject(400, "Scan is not completed")
+
+        # Check existing auto_trade_results (prevent double-execution)
+        # Note: re-execution is allowed — the executor's built-in guards
+        # (existing_symbols, skip_if_positions_open) prevent actual duplicate trades.
+        # Results are overwritten with the latest execution.
+
+        # Extract auto_trade_configs from stored config
+        config = scan.get("config", {})
+        if isinstance(config, str):
+            config = _json.loads(config)
+        auto_configs = config.get("auto_trade_configs")
+        if not auto_configs:
+            raise _reject(422, "No auto_trade_configs found in scan config")
+
+        results = scan.get("results", [])
+        if not results:
+            raise _reject(400, "Scan has no results")
+    except BaseException:
+        # Fail-safe net: release the claim on ANY error in the validation region so the
+        # scan stays re-runnable, then re-propagate (FastAPI maps HTTPException to its
+        # status; anything else becomes a 500).
+        _in_flight_auto_trades.discard(scan_id)
+        raise
 
     debug_recorder = getattr(request.app.state, "debug_trace_recorder", None)
 
@@ -245,63 +267,73 @@ async def trigger_auto_trade(request: Request, scan_id: str):
                 recorder=debug_recorder, debug_ctx=debug_ctx,
                 cooloff_repo=getattr(request.app.state, "cooloff_repo", None),
                 cooloff_classifier=getattr(request.app.state, "cooloff_classifier", None),
+                progress=getattr(request.app.state, "scan_progress_manager", None),
+                scan_id=scan_id,
+                # H1 fix: wire the per-(account,symbol) position lock so the manual
+                # re-run's placements are serialized against the AI manager / close
+                # loop acting on the same position (the scheduled path already passes
+                # this; the manual path must match for defense in depth).
+                position_lock_registry=getattr(request.app.state, "position_lock_registry", None),
             )
             if debug_recorder is not None and debug_ctx is not None:
                 await debug_recorder.open_run(debug_ctx, config_snapshot={"num_configs": len(auto_configs), "manual": True})
             executor.init_configs(auto_configs)
-            await executor.init_balances()
 
-            all_executions = []
+            # Claim the central single-flight slot BEFORE init_balances (not just the
+            # tail): init_balances force-closes positions + creates close rules, which
+            # must not overlap a concurrent scheduled auto-tail for the SAME scan (R2
+            # cross-path window). If an auto/scheduled tail already owns this scan, skip
+            # ENTIRELY — do NOT init, touch the DB, or emit a terminal: the in-flight
+            # tail owns this scan's results (update_scan is a full-column overwrite) and
+            # emits the single terminal `complete`.
+            from backend.services import post_scan_concurrency as _psc
+            _began_central = _psc.try_begin_tail(scan_id)
+            if not _began_central:
+                logger.warning("auto_trade_manual_tail_skipped_single_flight", extra={"scan_id": scan_id})
+                return
 
-            # Batch execution
+            tail_trade_results: list = []
+
+            async def _persist_stage(stage: str, executions: list) -> None:
+                tail_trade_results.extend(
+                    {"symbol": e.symbol, "side": e.side, "status": e.status,
+                     "order_id": e.order_id, "error": e.error, "account_id": e.account_id}
+                    for e in executions
+                )
+
             try:
-                batch_execs = await executor.execute_batch(results)
-                if batch_execs:
-                    all_executions.extend(batch_execs)
+                await executor.init_balances()
+                tail_out = await executor.run_post_scan_tail(
+                    results, persist_cb=_persist_stage, place_trades=True,
+                    emit_complete=False,  # FR-036: terminal emitted AFTER the DB commit below
+                )
+                summaries = tail_out.get("summaries") or executor.get_summaries()
+            except RateGateBanAbort:
+                logger.warning("auto_trade_manual_tail_rate_ban", extra={"scan_id": scan_id})
+                summaries = executor.get_summaries()
             except Exception as e:
-                logger.warning("auto_trade_manual_batch_error", extra={"scan_id": scan_id, "error": str(e)[:200]})
-
-            # Fill remaining
-            try:
-                fill_execs = await executor.fill_immediate_remaining(results)
-                if fill_execs:
-                    all_executions.extend(fill_execs)
-            except Exception as e:
-                logger.warning("auto_trade_manual_fill_error", extra={"scan_id": scan_id, "error": str(e)[:200]})
-
-            # Post-scan recheck
-            try:
-                recheck_execs = await executor.post_scan_recheck(results)
-                if recheck_execs:
-                    all_executions.extend(recheck_execs)
-            except Exception as e:
-                logger.warning("auto_trade_manual_recheck_error", extra={"scan_id": scan_id, "error": str(e)[:200]})
-
-            # Cleanup unused rules
-            try:
-                await executor.cleanup_unused_rules()
-            except Exception:
-                pass
-
-            # Persist results to DB
-            trade_results = [
-                {"symbol": e.symbol, "side": e.side, "status": e.status,
-                 "order_id": e.order_id, "error": e.error, "account_id": e.account_id}
-                for e in all_executions
-            ]
-            summaries = executor.get_summaries()
+                logger.warning("auto_trade_manual_tail_error", extra={"scan_id": scan_id, "error": str(e)[:200]})
+                summaries = executor.get_summaries()
+            finally:
+                _psc.end_tail(scan_id)
 
             await db.update_scan(
                 scan_id,
-                auto_trade_results=_json.dumps(trade_results),
+                auto_trade_results=_json.dumps(tail_trade_results),
                 auto_trade_summaries=_json.dumps(summaries),
             )
+            # FR-036: terminal event only after the results are persisted.
+            try:
+                executor.emit_tail_complete()
+            except Exception:
+                pass
 
             logger.info("auto_trade_manual_completed", extra={
                 "scan_id": scan_id,
-                "total_executions": len(all_executions),
-                "successful": sum(1 for e in all_executions if e.status == "success"),
+                "total_executions": len(tail_trade_results),
+                "successful": sum(1 for e in tail_trade_results if e.get("status") == "success"),
             })
+
 
             # Debug: emit account summaries and close the manual debug run.
             if debug_recorder is not None and debug_ctx is not None:

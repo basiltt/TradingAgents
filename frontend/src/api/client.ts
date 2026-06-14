@@ -492,6 +492,41 @@ export interface AutoTradeSummary {
   close_rule_id?: string | null;
   drawdown_rule_id?: string | null;
   ai_manager_disabled_capabilities?: string[];
+  /** Per-scan ordinal bridging an opaque live row to this summary (Phase 1/2). */
+  acct_ordinal?: number;
+}
+
+/**
+ * Live post-scan auto-trade progress event streamed over
+ * `/ws/v1/scanner/{scan_id}/auto-trade`. Display copy is derived from the
+ * machine-stable `stage`/`status`/`reason_code` codes — the backend does NOT
+ * send free-text label/detail over the wire (no secret/PII leak).
+ */
+export interface ScanAutoTradeProgressEvent {
+  type: "scan_auto_trade_progress";
+  schema_version: number;
+  scan_id: string;
+  stage: string;
+  status: "active" | "done" | "failed" | "skipped" | "cancelled" | "placed" | string;
+  pct: number | null;
+  seq: number;
+  ts: number;
+  // NOTE: there is deliberately NO `account_id` field. The raw trading-account id is
+  // STRIPPED from the wire payload server-side (ws_scan_progress._WIRE_FIELDS) so it
+  // never reaches the browser — the UI uses the opaque `acct_ordinal` instead. Do NOT
+  // add account_id here: making the type "true" would tempt relaxing the server-side
+  // wire filter and re-introduce the account-id leak the filter exists to prevent.
+  acct_ordinal?: number | null;
+  symbol?: string | null;
+  side?: string | null;
+  phase?: string | null;
+  reason_code?: string | null;
+  trades_executed?: number | null;
+  trades_failed?: number | null;
+  trades_skipped?: number | null;
+  dry_run?: boolean | null;
+  cooloff_until?: number | null;
+  substatus?: string | null;
 }
 
 export interface ScanStatus {
@@ -519,6 +554,10 @@ export interface ScanStatus {
   max_debate_rounds?: number;
   auto_trade_results?: AutoTradeResult[];
   auto_trade_summaries?: AutoTradeSummary[];
+  /** Count of auto-trade configs on this scan (CR-6). Drives the live-panel
+   *  mount + poll-through-tail + WS-open predicate (scan-sourced, not local form
+   *  state, so it is correct on cold-load/reload). */
+  auto_trade_config_count?: number;
 }
 
 export type StrategyCategory = "scalping" | "intraday" | "swing" | "positional" | "grid" | "dca" | "hedging" | "arbitrage";

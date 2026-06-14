@@ -179,3 +179,61 @@ async def test_start_scan_backend_url_skips_key_check(client, monkeypatch):
             headers=CSRF,
         )
     assert resp.status_code == 201
+
+
+# --------------------------------------------------------------------------- #
+# Auto-trade single-flight claim release (Phase 2 review R2 — H1 leak fix)
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.asyncio
+async def test_auto_trade_not_found_releases_in_flight_claim(client):
+    """A 404 (scan not found) must RELEASE the _in_flight_auto_trades claim so the same
+    scan_id can be retried — otherwise a validation failure permanently 409-bricks it."""
+    from backend.routers.scanner import _in_flight_auto_trades
+
+    sid = "00000000-0000-0000-0000-0000000000aa"
+    assert sid not in _in_flight_auto_trades
+    resp = await client.post(f"/api/v1/scanner/{sid}/auto-trade", headers=CSRF)
+    # 404 (not found) or 503 (no accounts service) — both are validation rejections.
+    assert resp.status_code in (404, 503)
+    # The claim must have been released (not leaked).
+    assert sid not in _in_flight_auto_trades, "in-flight claim leaked on a rejected request"
+
+    # A second request for the same scan is NOT pre-empted by a stale 409.
+    resp2 = await client.post(f"/api/v1/scanner/{sid}/auto-trade", headers=CSRF)
+    assert resp2.status_code in (404, 503)
+    assert resp2.status_code != 409
+
+
+@pytest.mark.asyncio
+async def test_auto_trade_invalid_id_releases_no_claim(client):
+    """An invalid scan_id is rejected at validation (400) BEFORE the claim — and must
+    never leave a claim behind regardless."""
+    from backend.routers.scanner import _in_flight_auto_trades
+
+    resp = await client.post("/api/v1/scanner/bad-id/auto-trade", headers=CSRF)
+    assert resp.status_code == 400
+    assert "bad-id" not in _in_flight_auto_trades
+
+
+@pytest.mark.asyncio
+async def test_manual_auto_trade_in_flight_409_when_central_slot_held(client):
+    """R2/R3: the up-front guard rejects a manual auto-trade with 409 when the central
+    single-flight slot is already held by a scheduled tail — so the manual path never
+    even reaches the background task / DB write that could clobber the in-flight tail."""
+    from backend.services import post_scan_concurrency as _psc
+    from backend.routers.scanner import _in_flight_auto_trades
+
+    _psc.reset_for_tests()
+    sid = "00000000-0000-0000-0000-0000000000cd"
+    assert _psc.try_begin_tail(sid) is True
+    try:
+        resp = await client.post(f"/api/v1/scanner/{sid}/auto-trade", headers=CSRF)
+        assert resp.status_code == 409, "must 409 while the central single-flight is held"
+        # No claim leaked on the rejection.
+        assert sid not in _in_flight_auto_trades
+    finally:
+        _psc.end_tail(sid)
+        _psc.reset_for_tests()
+
+

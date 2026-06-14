@@ -8,7 +8,12 @@ from backend.services import features as feat
 # ── feature registry ──
 
 def test_kill_switch_features_set():
-    assert feat.KILL_SWITCH_FEATURES == frozenset({"__all__", "f1", "f2", "f2_long"})
+    assert feat.KILL_SWITCH_FEATURES == frozenset({
+        "__all__", "f1", "f2", "f2_long",
+        "rate_gate_channel_fix",
+        "rate_gate_per_endpoint_limiter",
+        "post_scan_fanout_disabled",
+    })
 
 
 def test_feature_for_cohort():

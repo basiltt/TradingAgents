@@ -1,0 +1,22 @@
+[
+  {
+    "symbol": "ESPORTSUSDT",
+    "prod": "Short",
+    "score": -7,
+    "net": "0.00",
+    "minimax": "No Trade",
+    "conf": 5,
+    "reversal": "high",
+    "reason": "Price near 0.060 support, no breakdown confirmed; EMA9<EMA21 bearish but RSI near 33 and bounce possible; risk of reversal high."
+  },
+  {
+    "symbol": "FOLKSUSDT",
+    "prod": "Long",
+    "score": 7,
+    "net": "-4.17",
+    "minimax": "No Trade",
+    "conf": 5,
+    "reversal": "medium",
+    "reason": "Price above EMAs, RSI overbought; bounce from 1.7181 lacks bearish breakdown, momentum not confirmed down, risk of reversal high."
+  }
+]

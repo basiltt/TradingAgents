@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from backend.services.analysis_service import DEFAULT_MAX_CONCURRENT, ConcurrencyLimitError
 from backend.services.auto_trade_service import AutoTradeExecutor
+from backend.services.bybit_rate_gate import RateGateBanAbort
 
 logger = logging.getLogger(__name__)
 
@@ -349,6 +350,9 @@ class ScannerService:
         self._sector_service = sector_service
         self._debug_recorder = debug_recorder
         self._kline_cache = kline_cache  # for Regime Multi-Strategy BTC/MR-mean fetches
+        # Live post-scan progress manager (ScanProgressManager); stamped by main.py.
+        # Optional / None-safe — when absent (tests, backtest) progress emits no-op.
+        self._scan_progress = None
         self._scans: Dict[str, Dict[str, Any]] = {}
         self._lock = asyncio.Lock()
 
@@ -707,6 +711,7 @@ class ScannerService:
                 position_lock_registry=getattr(self, "_position_lock_registry", None),
                 cooloff_repo=self._resolve_cooloff_repo(),
                 cooloff_classifier=self._resolve_cooloff_classifier(),
+                progress=self._scan_progress, scan_id=scan_id,
             )
             # ── Regime Multi-Strategy: build the scan-time ScanContext ──
             # Kill-switch is read UNCONDITIONALLY (R3-F1) so master/per-feature kills
@@ -1039,6 +1044,7 @@ class ScannerService:
                     position_lock_registry=getattr(self, "_position_lock_registry", None),
                     cooloff_repo=self._resolve_cooloff_repo(),
                     cooloff_classifier=self._resolve_cooloff_classifier(),
+                    progress=self._scan_progress, scan_id=scan_id,
                 )
                 # Regime Multi-Strategy: rebuild the ScanContext on resume too, else
                 # MR would be silently inert (and the kill-switch unread) for resumed
@@ -1117,8 +1123,24 @@ class ScannerService:
             "max_debate_rounds": config.get("max_debate_rounds"),
             "auto_trade_results": scan.get("auto_trade_results", []),
             "auto_trade_summaries": scan.get("auto_trade_summaries", []),
+            "auto_trade_config_count": self._auto_trade_config_count(config),
         }
 
+    @staticmethod
+    def _auto_trade_config_count(config: Any) -> int:
+        """Number of auto-trade configs on a scan (CR-6). Derived at serialize time
+        from the scan config — no DB column, retroactive for old scans. Drives the
+        frontend's poll-through-tail / WS-open / panel-mount predicate, which must NOT
+        depend on volatile local form state."""
+        if isinstance(config, str):
+            try:
+                config = _json.loads(config)
+            except Exception:
+                return 0
+        if not isinstance(config, dict):
+            return 0
+        cfgs = config.get("auto_trade_configs")
+        return len(cfgs) if isinstance(cfgs, list) else 0
     def _serialize_db(self, scan: Dict[str, Any]) -> Dict[str, Any]:
         config = scan.get("config", {})
         if isinstance(config, str):
@@ -1151,6 +1173,7 @@ class ScannerService:
             "max_debate_rounds": config.get("max_debate_rounds"),
             "auto_trade_results": scan.get("auto_trade_results") or [],
             "auto_trade_summaries": scan.get("auto_trade_summaries") or [],
+            "auto_trade_config_count": self._auto_trade_config_count(config),
         }
 
     async def _append_auto_trade_results(self, scan_id: str, executions: list) -> None:
@@ -1295,41 +1318,60 @@ class ScannerService:
         final_failed = 0
         final_completed_at = now
 
-        # Auto-trade batch execution (after scan completes, not on cancel/error)
-        if not scan_error:
-            async with self._lock:
-                scan = self._scans.get(scan_id)
-                executor = scan.get("auto_trade_executor") if scan else None
-                all_results = list(scan["results"]) if scan else []
-                cancelled = scan.get("cancel", False) if scan else True
-                total = scan["total"] if scan else 0
-                failed_count = scan["failed"] if scan else 0
-            # Skip batch if >50% of symbols failed (unreliable data)
-            too_many_failures = total > 0 and failed_count > total * 0.5
-            if executor and all_results and not cancelled and not too_many_failures:
-                await self._refresh_scan_auto_trade_config_from_schedule(scan_id)
-                try:
-                    batch_executions = await executor.execute_batch(all_results)
-                    await self._append_auto_trade_results(scan_id, batch_executions)
-                except Exception as e:
-                    logger.warning("auto_trade_batch_error", extra={"scan_id": scan_id, "error": str(e)[:200]})
-                # Fill remaining slots for immediate-mode configs with fill_to_max_trades
-                try:
-                    fill_executions = await executor.fill_immediate_remaining(all_results)
-                    await self._append_auto_trade_results(scan_id, fill_executions)
-                except Exception as e:
-                    logger.warning("auto_trade_fill_error", extra={"scan_id": scan_id, "error": str(e)[:200]})
-                # Post-scan re-check: handle accounts where conditions changed during the scan
-                # (positions closed by TP/SL/drawdown, or close_on_profit_pct threshold now met)
-                try:
-                    recheck_executions = await executor.post_scan_recheck(all_results)
-                    await self._append_auto_trade_results(scan_id, recheck_executions)
-                except Exception as e:
-                    logger.warning("auto_trade_post_scan_recheck_error", extra={"scan_id": scan_id, "error": str(e)[:200]})
-
+        # Auto-trade post-scan tail. Phase 2: the 5-stage tail
+        # (batch->fill->recheck->cleanup->summaries) runs through the single
+        # run_post_scan_tail orchestrator so the scheduled, manual and resume paths
+        # behave identically and emit live progress. The three order-placing stages
+        # are gated by `place_trades`; cleanup + summaries run for ANY executor
+        # (mirroring the prior code where they ran unconditionally for a constructed
+        # executor, even on scan_error/cancelled, to tidy rules created by init).
         async with self._lock:
             scan = self._scans.get(scan_id)
             executor = scan.get("auto_trade_executor") if scan else None
+            all_results = list(scan["results"]) if scan else []
+            cancelled = scan.get("cancel", False) if scan else True
+            total = scan["total"] if scan else 0
+            failed_count = scan["failed"] if scan else 0
+        # Skip placement if >50% of symbols failed (unreliable data)
+        too_many_failures = total > 0 and failed_count > total * 0.5
+        tail_summaries = None
+        if executor:
+            place_trades = (
+                not scan_error and bool(all_results)
+                and not cancelled and not too_many_failures
+            )
+            if place_trades:
+                await self._refresh_scan_auto_trade_config_from_schedule(scan_id)
+
+            async def _persist_stage(stage: str, executions: list) -> None:
+                await self._append_auto_trade_results(scan_id, executions)
+
+            from backend.services import post_scan_concurrency as _psc
+            began = _psc.try_begin_tail(scan_id)
+            if not began:
+                # Another tail (a manual re-run) for THIS scan is already in flight.
+                # Skip to avoid a concurrent double-placement; the in-flight tail owns
+                # this scan's results. (Single-flight is the hard cross-path guard.)
+                logger.warning("auto_trade_tail_skipped_single_flight", extra={"scan_id": scan_id})
+            else:
+                try:
+                    tail_out = await executor.run_post_scan_tail(
+                        all_results, persist_cb=_persist_stage, place_trades=place_trades,
+                        emit_complete=False,  # FR-036: terminal emitted AFTER the final DB commit below
+                    )
+                    tail_summaries = tail_out.get("summaries")
+                except RateGateBanAbort:
+                    logger.warning("auto_trade_tail_rate_ban", extra={"scan_id": scan_id})
+                except Exception as e:
+                    logger.warning("auto_trade_tail_error", extra={"scan_id": scan_id, "error": str(e)[:200]})
+                finally:
+                    _psc.end_tail(scan_id)
+
+        async with self._lock:
+            scan = self._scans.get(scan_id)
+            # Re-bind executor for the debug-close block below; finalization nulls the
+            # scan-dict ref but the local var keeps the object alive.
+            executor = scan.get("auto_trade_executor") if scan else executor
             if scan:
                 if scan["cancel"]:
                     scan["status"] = "cancelled"
@@ -1347,17 +1389,14 @@ class ScannerService:
                 final_failed = scan["failed"]
                 final_completed_at = scan["completed_at"]
 
-        # Clean up close rules for accounts that had zero successful trades
+        # Surface per-account summaries (incl. stopped_reason) to the UI. Computed by
+        # the orchestrator above (cleanup already ran inside it).
         if executor:
-            try:
-                await executor.cleanup_unused_rules()
-            except Exception:
-                pass
-            # Fix #4: Surface per-account summaries (including stopped_reason) to UI
-            async with self._lock:
-                scan = self._scans.get(scan_id)
-                if scan:
-                    scan["auto_trade_summaries"] = executor.get_summaries()
+            if tail_summaries is not None:
+                async with self._lock:
+                    scan = self._scans.get(scan_id)
+                    if scan:
+                        scan["auto_trade_summaries"] = tail_summaries
 
             # Debug: emit account summaries and close the debug run.
             # NOTE: OUTSIDE the `async with self._lock` above — emit_account_summaries
@@ -1393,6 +1432,16 @@ class ScannerService:
                 auto_trade_results=_json.dumps(auto_results) if auto_results else "[]",
                 auto_trade_summaries=_json.dumps(auto_summaries) if auto_summaries else "[]",
             )
+
+        # FR-036: the terminal "complete" progress event is emitted ONLY AFTER the final
+        # results are committed to the DB above, so a client that refetches on the
+        # terminal event always sees the persisted results (no refetch-before-commit
+        # race). Fail-open; only when an executor actually ran the tail.
+        if executor is not None:
+            try:
+                executor.emit_tail_complete()
+            except Exception:
+                pass
 
         await self._notify_scan_list_changed()
 

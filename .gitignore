@@ -243,5 +243,3 @@ node_modules/
 _tick_cache/
 
 
-# Ignore scripts/squeeze_research
-scripts/squeeze_research/

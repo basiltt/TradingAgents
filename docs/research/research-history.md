@@ -521,6 +521,84 @@ Each fix has regression tests (SL clamp ×4, lock force-release ×1, MR aggregat
 
 ---
 
+## 2026-06-14 — 🔄 PRODUCTION RESET: New Baseline Epoch ("Epoch 2")
+
+**Timestamp:** Reset executed 2026-06-13 ~17:06 UTC (accounts) → 18:31 UTC (schedule) = **14-06-2026 00:01 IST**
+**Type:** Full production wipe + re-provision + backtest-optimized config deployment (no data analysis — there is no history yet)
+**Trigger:** Operator recreated the production database from empty, reset every account to **$100**, re-added all accounts, and launched a brand-new Scheduled Market Scan whose auto-trade settings were **optimized from backtests run on data through 2026-06-13**.
+
+### ⚠️ Read this before the next research run
+- **All pre-2026-06-14 PnL/trade history in production is GONE.** Every metric in the entries *above* this line belongs to **Epoch 1** (2026-05-20 → 2026-06-13) and is **not comparable** to post-reset numbers as an account balance series. Treat Epoch 1 findings as *learnings* (what the backtest optimization was based on), not as a live baseline.
+- **The new baseline is zero.** All 21 accounts start at $100 on 2026-06-14. The next profitability run is **Epoch 2's first measurement** — compare against $100 start, not against the +$1,370 Epoch-1 totals.
+- **Local DB is intentionally NOT reset.** Per operator: local keeps Epoch-1 scan history; we continue copying Epoch-2 scans on top of it via `/copy-prod-scans`. Old + new epoch scans coexist locally (fine for backtesting; just be aware the local `scans` table spans both epochs).
+- **Future data copy cutoff:** only copy production data **after 14-06-2026 12 AM IST (= 2026-06-13 18:30 UTC)**. Use `/copy-prod-scans --since 2026-06-13`; the first Epoch-2 scan ran 2026-06-13 19:03 UTC.
+
+### What changed in production
+| Item | Epoch 1 (old) | Epoch 2 (new, from 2026-06-14) |
+|------|---------------|-------------------------------|
+| Database | accumulated since ~May 20 | **recreated empty** |
+| Account balances | varied ($93–$248) | **all reset to $100** |
+| Accounts | 21 active | **21 active** (24 rows; 3 inactive dup labels: Anju/Prince/Princy) |
+| Schedule | "Every 2 Hour Scan" / "Every 3 Hour Scan" (paused) | **"Every 3 Hour Scan"** `b8bc2b27-08a2-4d3d-9ccc-030428900988` — **active**, 180-min interval, Asia/Calcutta |
+| Config source | hand-tuned + earlier research recs | **backtest-optimized** through 2026-06-13 |
+| First live activity | — | first scan 2026-06-13 19:03 UTC; 44 positions opened within the first hour |
+
+### New backtest-optimized auto-trade config (Epoch 2)
+
+**Shared scan params:** 5 crypto analysts (technical, derivatives, news, fundamentals, social) · `interval=15` · provider `anthropic` via MiniMax (`MiniMax-M2.7-highspeed` for both deep+quick think) · `workflow_mode=quick_trade` · `research_depth=3` · `max_debate_rounds=1` · `max_parallel=10` · `ta_prefilter_enabled=true` (threshold 40) · `prompt_cache_enabled=true`.
+
+**Shared trade knobs (all 21 accounts):** `min_score=7` · `capital_pct=22` · `take_profit_pct=150` · `stop_loss_pct=100` · `trailing_profit_pct=2` · `max_same_sector=4` · `max_same_direction=3` · `confidence_filter=moderate` · `signal_sides=both` · `execution_mode=batch` · `max_price_drift_pct=6` · `max_trade_duration_hours=24` · `max_signal_age_minutes=150` · `skip_if_positions_open=true` · `fill_to_max_trades=true` · `adaptive_blacklist_enabled=false` · `mean_reversion_enabled=false` · `symbol_blacklist=null` (no toxic-symbol blacklist this epoch) · `breakeven_timeout_hours=null`.
+
+**Two risk cohorts** (the only per-account differences):
+
+| Cohort | Accounts | leverage | max_trades | max_drawdown_pct | target_goal_value | smart_drawdown_close |
+|--------|----------|----------|-----------|------------------|-------------------|----------------------|
+| **A — 8× tight-DD** | Anju, Annu, Appu, Autotrader, Boss, Brother, Dad, Jeffin, Jerin, Jerom (10 accts) | 8× | 3 | **12%** | 15% | **true** |
+| **B — 7× wide-DD** | Joshwa, Joyel, Mom, Preethy, Prince, Princy, Salomy, Sam, Sister, Unni, Wife (11 accts) | 7× | 4 | **100%** (effectively off) | 12% | false |
+
+> Cohort B runs `max_drawdown_pct=100` → the batch equity-drop wipeout rule is effectively disabled; those accounts rely on per-trade SL + trailing profit + the 12% profit goal + 24h max-duration instead. Cohort A keeps a tight 12% drawdown cap with smart-drawdown-close armed. **This is a live A/B test** of "tight batch drawdown vs. let-trades-breathe" — the single most important thing to measure in Epoch 2's first research run.
+
+**AI Manager:** enabled on **19 of 21** accounts; disabled only on **Anju** (cohort A) and **Joshwa** (cohort B) — these two are the AI-off control accounts for each cohort.
+
+**Lineage note:** these settings reflect the Epoch-1 research recommendations — `min_score` raised 6→7 (rec #2), `max_trades` cut 5→3/4 (rec #6), trailing stop +2% (rec #8), price-drift guard now 6% (rec #1), leverage moved toward the 7–8× risk-adjusted sweet spot (Epoch-1 finding #7: "10× best risk-adjusted"). The toxic-symbol blacklist (rec #5) and adaptive blacklist are **OFF** this epoch — flag to re-evaluate once Epoch-2 toxic symbols emerge.
+
+### Epoch 2 account IDs (authoritative — for next research run)
+
+> Many UUIDs were re-provisioned **identical** to Epoch 1 (Appu, Autotrader, Boss, Brother, Jeffin, Jerin, Joyel, Mom, Preethy, Princy, Salomy, Unni…). **9 accounts are new** (Anju, Annu, Dad, Jerom, Joshwa, Prince, Sam, Sister, Wife). Three inactive duplicate-label rows exist (`is_active=0`) — ignore them: Anju `d8d020b0…`, Prince `da693b4f…`, Princy `b9f28530…`.
+
+| Account | ID | Cohort | lev | AI mgr |
+|---------|-----|--------|-----|--------|
+| Anju - Demo | 541b19fa-66fb-47dd-95cb-0ec7284acce3 | A | 8× | **off** |
+| Annu - Demo | 008d49a4-b2ad-47b3-85b2-af61da239a71 | A | 8× | on |
+| Appu - Demo | 5d40b78e-1876-43ea-a4d9-9d276120fde1 | A | 8× | on |
+| Autotrader - Demo | 9caa9c96-ffc4-4b88-8bc5-7cf318559c69 | A | 8× | on |
+| Boss - Demo | 45b0ba20-6111-43af-bc13-b9b8b5135ee1 | A | 8× | on |
+| Brother - Demo | 3a6a715e-3585-4706-9e7d-df94faf7106c | A | 8× | on |
+| Dad - Demo | 75aecaa7-0f10-400b-a562-1ddd7ae6cf94 | A | 8× | on |
+| Jeffin - Demo | 4bce5bcb-e192-4228-b9b2-574478d0aea5 | A | 8× | on |
+| Jerin - Demo | 1567abfd-26fa-4ba7-85b9-85365038fced | A | 8× | on |
+| Jerom - Demo | 1835a20c-3ec6-45cf-ba7f-60f196fd7668 | A | 8× | on |
+| Joshwa - Demo | 64517e7c-ea61-4daa-a406-bba40a9344e8 | B | 7× | **off** |
+| Joyel - Demo | e1d767c1-fbaa-43bd-8b34-fd21cd9b6263 | B | 7× | on |
+| Mom - Demo | 34f1c83a-522b-432c-ab23-4b7650610ecd | B | 7× | on |
+| Preethy - Demo | a59250e3-9696-4399-9fe2-aeab8a0a8db6 | B | 7× | on |
+| Prince - Demo | d2ff6142-444a-43d0-aec4-69abb6c5ddb5 | B | 7× | on |
+| Princy - Demo | 22379c36-1a18-4844-8c18-3326343552e2 | B | 7× | on |
+| Salomy - Demo | da7082ca-775e-44b3-94ec-aef77b451915 | B | 7× | on |
+| Sam - Demo | 45493d88-e7dc-4be4-a307-e3bdb15dce72 | B | 7× | on |
+| Sister - Demo | c8001b0b-107f-4655-b6a1-3f6ca9445edc | B | 7× | on |
+| Unni - Demo | 3aca7442-2bd0-44c6-b4ef-bc46a9593f35 | B | 7× | on |
+| Wife - Demo | bb15f4c7-a737-47b0-ba62-2aca48544253 | B | 7× | on |
+
+### What the NEXT profitability research run must do
+1. **Reset the comparison frame.** Baseline = $100 × 21 on 2026-06-14. Do NOT compare to Epoch-1 totals — report Epoch-2 PnL from zero.
+2. **Score the A/B drawdown test.** Cohort A (8×, 12% DD, smart-close) vs Cohort B (7×, DD off, breathe). Which cohort's equity curve is healthier? This decides the next config.
+3. **Score the AI-manager control.** Anju (A) and Joshwa (B) run AI-off — compare each against its cohort's AI-on peers to finally isolate AI Manager value-add on a clean dataset.
+4. **Watch for new toxic symbols.** Blacklist + adaptive blacklist are OFF — if specific symbols bleed, that's the first re-enable recommendation.
+5. **Production access reminder:** MCP tools point at LOCAL/dev only. Query **production** read-only via SSH: `python copilot-api/ssh_run.py 'psql "postgresql://postgres:<pw>@localhost:5432/tradingagents" -c "…"'` (host is localhost *from the server*). Never write secrets into these docs.
+
+---
+
 <!-- NEXT RESEARCH ENTRY GOES BELOW THIS LINE -->
 
 

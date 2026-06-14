@@ -15,12 +15,16 @@ from typing import Any
 import aiohttp
 from yarl import URL
 
-from backend.services.bybit_rate_gate import get_rate_gate
+from backend.services.bybit_rate_gate import get_rate_gate, RateGateBanAbort
+from backend.services.bybit_endpoints import classify_endpoint, EndpointClassificationError
 
 logger = logging.getLogger(__name__)
 
 _MAX_RETRIES = 3
 _RETRY_BASE_DELAY = 0.5
+# Confirmed-ban cooloff: Bybit's IP ban is ≥10 minutes; pause egress for that long
+# (or the header-provided reset, whichever is greater) so we don't extend the ban.
+_BAN_COOLOFF_SECONDS = 600.0
 
 
 class BybitAPIError(Exception):
@@ -40,9 +44,10 @@ class BybitClient:
         "demo": "https://api-demo.bybit.com",
     }
 
-    def __init__(self, api_key: str, api_secret: str, account_type: str):
+    def __init__(self, api_key: str, api_secret: str, account_type: str, account_id: str | None = None):
         self._api_key = api_key
         self._api_secret = api_secret
+        self._account_id = account_id  # per-UID key for the rate gate's sub-limiter
         self._base_url = self.REST_ENDPOINTS.get(account_type, self.REST_ENDPOINTS["demo"])
         self._semaphore = asyncio.Semaphore(10)
         self._recv_window = "5000"
@@ -72,6 +77,17 @@ class BybitClient:
     async def _do_sync_time(self) -> None:
         """Internal: actually perform the time sync (no lock)."""
         try:
+            # ALWAYS route the time-sync through the gate so it is counted and the
+            # ban breaker is honored. Use the high-priority 'order' lane so a
+            # saturated channel can't starve it (a stale clock causes 10002
+            # timestamp rejects). The channel matches the channel-fix state:
+            # public when active, private under revert (FR-002).
+            from backend.services import post_scan_flags as _flags
+            _channel = "public" if _flags.channel_fix_active() else "private"
+            # Background priority: time-sync waits out a ban (does not raise) — a
+            # stale clock is preferable to crashing the sync path. lane="order"
+            # keeps it ahead of other background traffic for promptness.
+            await get_rate_gate().acquire_async(channel=_channel, lane="order", raise_on_ban=False)
             session = await self._get_session()
             local_before = int(time.time() * 1000)
             async with session.get(f"{self._base_url}/v5/market/time", timeout=aiohttp.ClientTimeout(total=5)) as resp:
@@ -132,10 +148,16 @@ class BybitClient:
         *, retry_on_network_error: bool = True, lane: str = "live",
     ) -> dict[str, Any]:
         await self._ensure_time_synced()
+        # Capture the ban generation BEFORE the request so a successful response can
+        # only clear the ban it was issued under (not a fresher one — ABA guard).
+        try:
+            _ban_gen_at_start = get_rate_gate().ban_generation
+        except Exception:
+            _ban_gen_at_start = None
 
         for attempt in range(_MAX_RETRIES):
             async with self._semaphore:
-                await self._wait_for_rate_limit(lane=lane)
+                await self._wait_for_rate_limit(path, lane=lane)
                 timestamp = int(time.time() * 1000) + self._time_offset_ms
 
                 if method == "GET" and params:
@@ -183,31 +205,91 @@ class BybitClient:
                     await self._sync_time()
                     continue
 
+                is_ip_ban_code = ret_code == 10018
                 is_rate_limited = (
                     ret_code == 10006
+                    or is_ip_ban_code
                     or "rate limit" in ret_msg
                     or "too many" in ret_msg
                 )
-                if is_rate_limited and attempt < _MAX_RETRIES - 1:
-                    delay = self._parse_reset_delay_from_headers(resp_headers) or (_RETRY_BASE_DELAY * (2 ** attempt))
-                    jitter = random.uniform(0, delay * 0.1)
-                    total_delay = delay + jitter
-                    logger.warning(f"Rate limited on {path}, retrying in {total_delay:.2f}s (attempt {attempt + 1})")
-                    await asyncio.sleep(total_delay)
-                    continue
+                if is_rate_limited:
+                    logger.warning(
+                        "bybit_rate_limited",
+                        extra={"path": path, "ret_code": ret_code, "attempt": attempt + 1},
+                    )
+                    if attempt < _MAX_RETRIES - 1:
+                        delay = self._parse_reset_delay_from_headers(resp_headers) or (_RETRY_BASE_DELAY * (2 ** attempt))
+                        jitter = random.uniform(0, delay * 0.1)
+                        total_delay = delay + jitter
+                        logger.warning(f"Rate limited on {path}, retrying in {total_delay:.2f}s (attempt {attempt + 1})")
+                        await asyncio.sleep(total_delay)
+                        continue
+                    # Exhausted retries while rate-limited. Distinguish a per-UID
+                    # throttle (recoverable, affects ONE account — must NOT halt the
+                    # whole process) from a genuine IP-level ban. Bybit signals an
+                    # IP ban with retCode 10018 or an "ip" / "banned" message; a bare
+                    # 10006 is most often a per-endpoint/per-UID cap. Only an
+                    # IP-ban signal trips the process-wide breaker (FR-047); a per-UID
+                    # 10006 surfaces as a normal BybitAPIError and is handled per-account.
+                    # "banned" alone is NOT used (a per-symbol "banned from trading"
+                    # must not trigger a global egress halt); require an explicit IP
+                    # signal: retCode 10018 or an "ip ... ban" message.
+                    is_ip_ban = (
+                        is_ip_ban_code
+                        or ("ip" in ret_msg and "ban" in ret_msg)
+                    )
+                    if is_ip_ban:
+                        logger.error(
+                            "bybit_ip_ban_detected_tripping_breaker",
+                            extra={"path": path, "ret_code": ret_code, "ret_msg": ret_msg[:120]},
+                        )
+                        try:
+                            reset = self._parse_ban_reset_seconds(resp_headers)
+                            cooloff = max(reset, _BAN_COOLOFF_SECONDS)
+                            gate = get_rate_gate()
+                            gate.trip_ban(cooloff_seconds=cooloff)
+                        except Exception:
+                            # Failing to TRIP the breaker is a money-safety event —
+                            # make it observable rather than swallowing it silently.
+                            logger.exception(
+                                "bybit_ban_trip_failed",
+                                extra={"path": path, "ret_code": ret_code},
+                            )
+                        # Lane-gated propagation: the order/scan path gets the fast
+                        # RateGateBanAbort so it can release locks + record a ban
+                        # substatus (FR-047). BACKGROUND lanes (reconciler / AI-mgr /
+                        # market-data / evaluator loops) get a NORMAL BybitAPIError so
+                        # their `except Exception` catches it and the loop survives to
+                        # wait out the ban on its next tick — a BaseException would
+                        # crash those supervisor-less loops at the worst time.
+                        if lane == "order":
+                            raise RateGateBanAbort(cooloff_until=get_rate_gate().ban_cooloff_until)
+                        raise BybitAPIError(ret_code, str(data.get("retMsg", "IP banned")))
 
                 if ret_code != 0:
                     ret_msg_raw = data.get("retMsg", "Unknown error")
                     logger.warning(f"Bybit API error on {path}: {ret_code} - {ret_msg_raw}")
                     raise BybitAPIError(ret_code, ret_msg_raw)
 
+                # A clean response confirms the IP is reachable again — if a
+                # half-open ban probe was in flight, close the breaker so normal
+                # traffic resumes (the probe "succeeded"). Guard with the ban
+                # generation observed at the START of this request so a slow success
+                # cannot wipe a FRESH ban tripped while it was in flight (ABA).
+                try:
+                    gate = get_rate_gate()
+                    if gate.ban_cooloff_until is not None:
+                        gate.clear_ban(expected_generation=_ban_gen_at_start)
+                except Exception:
+                    pass
                 return data.get("result", {})
 
         raise BybitAPIError(10006, "Rate limit exceeded after retries")
 
     @staticmethod
     def _parse_reset_delay_from_headers(headers: dict) -> float | None:
-        """Extract delay from X-Bapi-Limit-Reset-Timestamp header."""
+        """Extract delay from X-Bapi-Limit-Reset-Timestamp header (capped at 10s
+        for in-band retry backoff)."""
         reset_ts = headers.get("X-Bapi-Limit-Reset-Timestamp")
         if not reset_ts:
             return None
@@ -219,11 +301,55 @@ class BybitClient:
         except (ValueError, TypeError):
             return None
 
-    async def _wait_for_rate_limit(self, *, lane: str = "live") -> None:
-        """Acquire token from centralized IP-level rate gate (private channel).
-        Order placement / leverage use the 'order' lane (highest priority) so a
-        real-money order is never queued behind background traffic."""
-        await get_rate_gate().acquire_async(channel="private", lane=lane)
+    @staticmethod
+    def _parse_ban_reset_seconds(headers: dict) -> float:
+        """Extract the ban-window seconds from the reset header WITHOUT the 10s
+        retry cap (a real IP ban can be ≥10 minutes — under-waiting would re-probe
+        a still-banned IP and extend it). Returns 0.0 if the header is absent."""
+        reset_ts = headers.get("X-Bapi-Limit-Reset-Timestamp")
+        if not reset_ts:
+            return 0.0
+        try:
+            reset_ms = int(reset_ts)
+            now_ms = int(time.time() * 1000)
+            return max((reset_ms - now_ms) / 1000.0, 0.0)
+        except (ValueError, TypeError):
+            return 0.0
+
+    async def _wait_for_rate_limit(self, path: str = "", *, lane: str = "live") -> None:
+        """Acquire a token from the centralized rate gate for ``path``.
+
+        Classifies the endpoint (public market read vs private per-UID) via the
+        registry and, when the per-endpoint limiter is active, enforces the
+        per-account/endpoint sub-limit in the same acquire. Falls back to the
+        legacy all-private behavior when the channel-fix revert switch is on
+        (FR-001/009). Order placement / leverage use the 'order' lane.
+
+        Ban handling: only the 'order' lane (real-money placement / leverage /
+        protective close) gets the fast RateGateBanAbort so it can release locks
+        and record a ban substatus. All background lanes (live/mcp — reconciler,
+        AI manager, market data, WS) WAIT OUT the ban instead, so an IP ban
+        gracefully pauses those loops rather than crashing them.
+        """
+        from backend.services import post_scan_flags as _flags
+        gate = get_rate_gate()
+        raise_on_ban = (lane == "order")
+        if not _flags.channel_fix_active():
+            # Revert: legacy behavior — everything on the private channel, no sub-limiter.
+            await gate.acquire_async(channel="private", lane=lane, raise_on_ban=raise_on_ban)
+            return
+        try:
+            channel, endpoint_class = classify_endpoint(path) if path else ("private", "order_query")
+        except EndpointClassificationError:
+            # Unknown path: charge private conservatively (and log) rather than skip the gate.
+            logger.warning("bybit_unmapped_endpoint_charged_private", extra={"path": path})
+            channel, endpoint_class = "private", "order_query"
+        account_key = self._account_id if _flags.per_endpoint_limiter_active() else None
+        ep_class = endpoint_class if _flags.per_endpoint_limiter_active() else None
+        await gate.acquire_async(
+            channel=channel, lane=lane, account_key=account_key, endpoint_class=ep_class,
+            raise_on_ban=raise_on_ban,
+        )
 
     async def test_connection(self) -> dict[str, Any]:
         """Probe credentials via a wallet-balance call; returns {"success", "uid", "error"}."""

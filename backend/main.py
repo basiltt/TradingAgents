@@ -254,10 +254,65 @@ def create_app() -> FastAPI:
         configure_llm_min_spacing(llm_spacing)
 
         app.state.db = db
-        # Debug tracing is an OPTIONAL forensics feature. Its router (503 when absent)
-        # and the scanner (`if self._debug_recorder is not None`) are both designed to
-        # tolerate a missing recorder, so a failure here must NEVER abort trading
-        # startup — degrade to None and continue, mirroring backtest_service recovery.
+
+        # ── Post-scan optimization: rate-gate hardening (Phase 0) ──────────────
+        # validate_registry() guards against a private endpoint with no per-second
+        # cap (a per-UID ban risk). It runs OUTSIDE the fail-open block below so a
+        # real misconfiguration fails loudly at startup, as designed.
+        from backend.services.bybit_endpoints import (
+            ENDPOINT_PER_SECOND_CAP,
+            validate_registry,
+        )
+        validate_registry()
+        # Apply caps + start the revert-kill-switch refresher. This part is
+        # fail-open (a transient failure must not abort trading startup); the
+        # refresher ALWAYS starts so runtime revert stays available even if the
+        # one-time cap-apply hiccups.
+        _POST_SCAN_FLAGS_REFRESH_SECONDS = 15
+        try:
+            from backend.services.bybit_rate_gate import get_rate_gate
+            _caps = {k: v for k, v in ENDPOINT_PER_SECOND_CAP.items() if v is not None}
+            get_rate_gate().set_endpoint_caps(_caps, per_window=1.0)
+        except Exception:
+            logger.warning("post_scan_rate_gate_caps_init_failed", exc_info=True)
+        try:
+            from backend.services import post_scan_flags
+            await post_scan_flags.refresh_from_db(db)  # prime the snapshot once
+
+            async def _refresh_post_scan_flags() -> None:
+                while True:
+                    try:
+                        await asyncio.sleep(_POST_SCAN_FLAGS_REFRESH_SECONDS)
+                        await post_scan_flags.refresh_from_db(db)
+                    except asyncio.CancelledError:
+                        break
+                    except Exception:
+                        logger.debug("post_scan_flags_refresh_error", exc_info=True)
+
+            app.state._post_scan_flags_task = asyncio.create_task(_refresh_post_scan_flags())
+        except Exception:
+            logger.warning("post_scan_flags_refresher_init_failed", exc_info=True)
+
+        # ── Post-scan optimization: account-concurrency width (Phase 2) ──────────
+        # Default 1 => the parallel tail path is byte-identical to the old sequential
+        # path. width>1 is an operator opt-in (env POST_SCAN_ACCOUNT_CONCURRENCY),
+        # FR-049-clamped. NOTE: this deliberately does NOT use the _validated_int helper
+        # above (which RAISES on a bad value). For THIS knob a bad/out-of-range value must
+        # degrade to the safe sequential path (width=1), never abort trading startup —
+        # configure_account_concurrency clamps to [1,16] and falls back to 1 fail-open.
+        try:
+            from backend.services import post_scan_concurrency
+            _width_raw = os.environ.get("POST_SCAN_ACCOUNT_CONCURRENCY", "1")
+            _eff = post_scan_concurrency.configure_account_concurrency(_width_raw)
+            logger.info("post_scan_account_concurrency_configured", extra={"width": _eff})
+        except Exception:
+            logger.warning("post_scan_account_concurrency_init_failed", exc_info=True)
+
+        # Debug tracing is an OPTIONAL forensics feature. Its router (503 when
+        # absent) and the scanner (`if self._debug_recorder is not None`) are both
+        # designed to tolerate a missing recorder, so a failure here must NEVER abort
+        # trading startup — degrade to None and continue, mirroring backtest_service
+        # recovery.
         debug_recorder = None
         try:
             from backend.services.debug_trace_recorder import DebugTraceRecorder
@@ -310,6 +365,13 @@ def create_app() -> FastAPI:
         # Real-time per-stage progress stream for the backtest UI (load → warm →
         # simulate → metrics → complete), served over /ws/v1/backtest/{run_id}.
         app.state.backtest_progress_manager = BacktestProgressManager()
+        # Real-time per-stage progress stream for the post-scan auto-trade tail,
+        # served over /ws/v1/scanner/{scan_id}/auto-trade (Phase 1).
+        from backend.services.scan_progress_manager import ScanProgressManager
+        app.state.scan_progress_manager = ScanProgressManager()
+        # Wire the live progress manager into the scanner so per-scan executors emit
+        # post-scan auto-trade progress to the WS stream.
+        app.state.scanner_service._scan_progress = app.state.scan_progress_manager
         app.state.backtest_service = BacktestService(
             db=db, kline_cache=app.state.kline_cache_service,
             progress_manager=app.state.backtest_progress_manager,
@@ -650,6 +712,13 @@ def create_app() -> FastAPI:
             await _watchdog_task
         except asyncio.CancelledError:
             pass
+        _ps_flags_task = getattr(app.state, "_post_scan_flags_task", None)
+        if _ps_flags_task is not None:
+            _ps_flags_task.cancel()
+            try:
+                await _ps_flags_task
+            except asyncio.CancelledError:
+                pass
         await _safe_shutdown("scheduler_service", app.state.scheduler_service.shutdown())
         # Drain the scanner FIRST: an in-flight auto-trade scan places trades THROUGH
         # accounts_service / ai_manager_service, so the producer must be cancelled and
@@ -759,6 +828,8 @@ def create_app() -> FastAPI:
     app.include_router(ws_router)
     app.include_router(ws_accounts_router)
     app.include_router(ws_backtest_router)
+    from backend.routers.ws_scan_progress import router as ws_scan_progress_router
+    app.include_router(ws_scan_progress_router)
 
     # MCP server (AI agent integration) — single integration seam. Installs the
     # permanent /mcp/rpc indirection mount (503 gate until enabled) + the

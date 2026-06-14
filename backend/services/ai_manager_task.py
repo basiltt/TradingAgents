@@ -1507,8 +1507,24 @@ class AIManagerTask:
                     triggered = True
                     trigger_reason = f"equity_drop_{drop_pct:.1f}pct"
         elif not reference_equity:
-            self._ws_buffer["_emergency_ref_equity"] = equity_val
-            asyncio.ensure_future(self._persist_ref_equity(equity_val))
+            # FIX-004: floor the (re)seed by still-open unrealized losses. After an
+            # emergency close clears the reference, it would otherwise re-seed at the
+            # LOWERED post-close equity — so a position still open and bleeding gets a
+            # fresh, lower baseline and its ongoing drawdown never re-triggers the
+            # equity-drop emergency (the Unni ESPORTS desensitization: $84→$79 read as
+            # ~6% from a reset ~$84 ref instead of ~19% from the true high-water). Seed
+            # to equity + |open unrealized losses| so an open loser keeps counting
+            # against the high-water mark it is actually drawing down from. This restores
+            # RELATIVE drawdown protection in the 3-8% band; FIX-003's hard cap remains
+            # the absolute backstop above it.
+            open_loss = 0.0
+            for pos in positions:
+                u = _extract_upnl(pos)
+                if u < 0:
+                    open_loss += -u
+            seed = equity_val + open_loss
+            self._ws_buffer["_emergency_ref_equity"] = seed
+            asyncio.ensure_future(self._persist_ref_equity(seed))
 
         # Condition 2: Per-position PnL velocity exceeds emergency threshold
         # Only close the SPECIFIC positions with extreme velocity, not all losers
@@ -1530,6 +1546,32 @@ class AIManagerTask:
             if velocity_emergency_symbols:
                 triggered = True
                 trigger_reason = "pnl_velocity_emergency"
+
+        # Condition 3 (FIX-003): per-position HARD LOSS. A position whose unrealized
+        # loss exceeds max_position_loss_pct of equity is force-closed for capital
+        # preservation — regardless of velocity, urgency, or the LLM/standard path.
+        # This closes the dead-zone where a big-but-CALM loser (no velocity spike) sat
+        # past the standard-path's max_single_decision_loss_pct skip and bled out
+        # (the Unni ESPORTS bug: -3% → -19% over 46 untouched eval cycles). The
+        # max_single_decision_loss_pct soft cap still governs whether the LLM may
+        # casually realize a loss; this hard cap is the capital-preservation backstop.
+        hard_loss_symbols: list[str] = []
+        hard_cap = getattr(self._config, "max_position_loss_pct", None)
+        if not triggered and hard_cap and equity_val > 0:
+            now_mono = time.monotonic()
+            for pos in positions:
+                symbol = pos.get("symbol", "")
+                if not symbol:
+                    continue
+                # Per-symbol cooldown: don't re-trigger same symbol within 30s.
+                if now_mono - self._emergency_closed_symbols.get(symbol, 0.0) < _EMERGENCY_CLOSE_SYMBOL_TTL_S:
+                    continue
+                upnl = _extract_upnl(pos)
+                if upnl < 0 and (abs(upnl) / equity_val) * 100 >= hard_cap:
+                    hard_loss_symbols.append(symbol)
+            if hard_loss_symbols:
+                triggered = True
+                trigger_reason = "position_hard_loss"
 
         if not triggered:
             return False
@@ -1553,15 +1595,37 @@ class AIManagerTask:
         locked = set(self._config.locked_positions or [])
 
         if trigger_reason.startswith("equity_drop"):
-            # Account-wide crash: close ALL losing positions (capital preservation)
-            close_symbols = []
-            for pos in positions:
+            # Account-wide crash: close ALL losing positions (capital preservation).
+            # FIX-002: enumerate losers from the AUTHORITATIVE exchange snapshot UNIONed
+            # with the WS-buffer losers. The WS position buffer is event-sourced and
+            # eventually-consistent — during a fast cascade it can be MISSING a still-open
+            # loser (the Unni ESPORTS bug: the buffer listed two positions that had just
+            # closed on their own stops but not the open ESPORTS). Unioning the exchange
+            # truth with the buffer guarantees we never close FEWER losers than before,
+            # only ever catch ones the buffer dropped. Falls back to the buffer alone if
+            # the exchange fetch fails (never crash the emergency, never shrink the set).
+            loser_symbols: set[str] = set()
+            for pos in positions:  # WS-buffer losers (existing behavior, as a floor)
                 symbol = pos.get("symbol", "")
-                if not symbol or symbol in excluded or symbol in locked:
-                    continue
-                upnl = _extract_upnl(pos)
-                if upnl < 0:
-                    close_symbols.append(symbol)
+                if symbol and _extract_upnl(pos) < 0:
+                    loser_symbols.add(symbol)
+            try:
+                accounts_service = getattr(self._service, "_accounts_service", None)
+                if accounts_service is not None:
+                    exch_positions = await accounts_service.get_positions(self._account_id) or []
+                    for pos in exch_positions:  # authoritative exchange losers
+                        symbol = pos.get("symbol", "")
+                        if symbol and _extract_upnl(pos) < 0:
+                            loser_symbols.add(symbol)
+            except Exception:
+                # Fail-safe: keep the WS-buffer loser set; do not abort the emergency.
+                self._log.warning("Emergency equity-drop: exchange position fetch failed; "
+                                  "using WS-buffer losers only")
+            close_symbols = [s for s in loser_symbols if s not in excluded and s not in locked]
+        elif trigger_reason == "position_hard_loss":
+            # FIX-003: close only the specific position(s) over the hard-loss cap,
+            # sparing MR/locked/excluded (same filter as the other branches).
+            close_symbols = [s for s in hard_loss_symbols if s not in excluded and s not in locked]
         else:
             # Velocity trigger: only close the specific positions with extreme signals
             close_symbols = [s for s in velocity_emergency_symbols if s not in excluded and s not in locked]
@@ -1671,10 +1735,32 @@ class AIManagerTask:
                     "strategy_version": self._config.strategy_version,
                     "chain_key_version": _CHAIN_KEY_VERSION,
                 }
-                await self._service._repo.insert_decision(
+                decision_id, decision_ts = await self._service._repo.insert_decision(
                     self._account_id, decision_data,
                     self._service._hmac_key or "no-hmac-configured",
                 )
+                # FIX-002: persist the execution OUTCOME on the emergency decision.
+                # Previously the emergency path called insert_decision but never
+                # update_decision_outcome, so execution_result stayed NULL — the forensic
+                # record showed an emergency "fired" with no evidence of what it closed
+                # (the Unni ESPORTS investigation hit exactly this blind spot). Mirror the
+                # standard path: write the close outcome so the audit trail is complete.
+                try:
+                    _realized = close_result.get("realized_pnl")
+                    if _realized is None:
+                        _realized = estimated_upnl
+                    await self._service._repo.update_decision_outcome(
+                        decision_id, decision_ts,
+                        {
+                            "status": "closed" if closed > 0 else "no_op",
+                            "closed": closed,
+                            "symbols": symbols,
+                            "realized_pnl": float(_realized or 0.0),
+                            "close_result": close_result,
+                        },
+                    )
+                except Exception:
+                    self._log.warning("Failed to persist emergency execution_result")
             return True
         except Exception:
             self._log.exception("Emergency batch close FAILED")

@@ -443,12 +443,12 @@ Repository secrets required by the deploy job:
 
 | Secret | Example value | Purpose |
 | --- | --- | --- |
-| `ORACLE_HOST` | `144.24.128.103` | Oracle VM public IP or hostname |
+| `ORACLE_HOST` | `157.173.124.192` | Oracle VM public IP or hostname |
 | `ORACLE_USER` | `ubuntu` | SSH username |
 | `ORACLE_PORT` | `22` | SSH port |
 | `ORACLE_APP_DIR` | `/home/ubuntu/projects/TradingAgents` | Repo path on the server |
 | `ORACLE_SSH_KEY` | multiline private key | Private key used by GitHub Actions to SSH into the VM |
-| `PRODUCTION_HEALTHCHECK_URL` | `https://144.24.128.103.sslip.io/api/v1/health` | Post-deploy verification URL |
+| `PRODUCTION_HEALTHCHECK_URL` | `https://1157.173.124.192.sslip.io/api/v1/health` | Post-deploy verification URL |
 
 Deployment notes:
 
