@@ -72,9 +72,9 @@ const AccountDetailView = lazy(() =>
     default: module.AccountDetailView,
   })),
 );
-const AnalyticsDashboard = lazy(() =>
-  import("@/components/analytics/AnalyticsDashboard").then((module) => ({
-    default: module.AnalyticsDashboard,
+const PerformanceDashboard = lazy(() =>
+  import("@/components/analytics/PerformanceDashboard").then((module) => ({
+    default: module.PerformanceDashboard,
   })),
 );
 const StrategiesPageComponent = lazy(() =>
@@ -283,7 +283,7 @@ function AccountDetailPage() {
 function PerformancePage() {
   return (
     <RouteSuspense>
-      <AnalyticsDashboard />
+      <PerformanceDashboard />
     </RouteSuspense>
   );
 }

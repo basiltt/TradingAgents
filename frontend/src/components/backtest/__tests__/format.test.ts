@@ -9,7 +9,7 @@ import {
   signOf,
   pnlColorClass,
   NA,
-} from "../format";
+} from "@/lib/format";
 
 describe("formatUsd", () => {
   it("formats positive/negative with $ and commas", () => {

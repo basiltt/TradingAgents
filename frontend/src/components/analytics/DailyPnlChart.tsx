@@ -1,67 +1,38 @@
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
-import type { DailySnapshot } from "@/api/client";
+import type { DailyPnlPoint } from "./performanceTypes";
 
 interface Props {
-  snapshots: DailySnapshot[];
+  data: DailyPnlPoint[];
 }
 
-export function DailyPnlChart({ snapshots }: Props) {
-  const data = snapshots.map((s) => ({
-    date: s.snapshot_date,
-    pnl: Math.round(s.realised_pnl * 100) / 100,
-  }));
-
-  if (data.length === 0) return null;
-
+export function DailyPnlChart({ data }: Props) {
+  if (data.length === 0) {
+    return (
+      <figure
+        role="img"
+        aria-label="Daily P&L chart: no data"
+        className="flex h-[260px] items-center justify-center text-[var(--neu-text-soft)]"
+      >
+        No daily P&L data
+      </figure>
+    );
+  }
+  const rows = data.map((p) => ({ date: p.date, pnl: Math.round(p.pnl * 100) / 100 }));
   return (
-    <ResponsiveContainer width="100%" height={200}>
-      <BarChart data={data}>
-        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
-        <XAxis
-          dataKey="date"
-          tick={{ fill: "var(--muted-foreground)", fontSize: 10 }}
-          tickLine={false}
-          axisLine={false}
-          tickFormatter={(v: string) => {
-            if (v.includes(" ")) {
-              const [, time] = v.split(" ");
-              return time.slice(0, 5);
-            }
-            const [, m, d] = v.split("-");
-            return `${parseInt(m)}/${parseInt(d)}`;
-          }}
-        />
-        <YAxis
-          tick={{ fill: "var(--muted-foreground)", fontSize: 10 }}
-          tickLine={false}
-          axisLine={false}
-          tickFormatter={(v: number) => v < 0 ? `-$${Math.abs(v).toFixed(0)}` : `$${v.toFixed(0)}`}
-        />
-        <Tooltip
-          contentStyle={{
-            backgroundColor: "var(--card)",
-            border: "1px solid var(--border)",
-            borderRadius: "12px",
-            fontSize: 11,
-          }}
-          formatter={(value: unknown) => [Number(value) < 0 ? `-$${Math.abs(Number(value)).toFixed(2)}` : `$${Number(value).toFixed(2)}`, "Realized P&L"]}
-          labelFormatter={(label: unknown) => {
-            const s = String(label);
-            if (s.includes(" ")) {
-              const [datePart, time] = s.split(" ");
-              const [y, m, d] = datePart.split("-");
-              return `${parseInt(m)}/${parseInt(d)}/${y} ${time}`;
-            }
-            const [y, m, d] = s.split("-");
-            return `${parseInt(m)}/${parseInt(d)}/${y}`;
-          }}
-        />
-        <Bar dataKey="pnl" radius={[3, 3, 0, 0]}>
-          {data.map((entry, index) => (
-            <Cell key={index} fill={entry.pnl >= 0 ? "var(--success)" : "var(--destructive)"} />
-          ))}
-        </Bar>
-      </BarChart>
-    </ResponsiveContainer>
+    <figure role="img" aria-label="Daily profit and loss bars">
+      <ResponsiveContainer width="100%" height={260}>
+        <BarChart data={rows}>
+          <CartesianGrid stroke="var(--neu-stroke-soft)" strokeDasharray="3 3" />
+          <XAxis dataKey="date" tick={{ fill: "var(--neu-text-soft)", fontSize: 11 }} minTickGap={24} />
+          <YAxis tick={{ fill: "var(--neu-text-soft)", fontSize: 11 }} />
+          <Tooltip />
+          <Bar dataKey="pnl">
+            {rows.map((r, i) => (
+              <Cell key={i} fill={r.pnl >= 0 ? "var(--neu-success)" : "var(--neu-danger)"} />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </figure>
   );
 }

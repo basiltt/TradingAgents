@@ -10,7 +10,7 @@ import {
   MONTH_LABELS,
   type MonthCell,
 } from "./analysis";
-import { formatUsd, pnlColorClass } from "./format";
+import { formatUsd, pnlColorClass } from "@/lib/format";
 
 /* ------------------------------ monthly heatmap ------------------------------ */
 

@@ -178,7 +178,9 @@ function App() {
           // in-memory for the session.
           dehydrateOptions: {
             shouldDehydrateQuery: (query) =>
-              query.state.status === "success" && query.queryKey[0] !== "proxy-models",
+              query.state.status === "success" &&
+              query.queryKey[0] !== "proxy-models" &&
+              query.queryKey[0] !== "performance-live",
           },
         }}
       >

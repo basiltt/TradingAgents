@@ -1,24 +1,30 @@
-import type { DailySnapshot } from "@/api/client";
+import type { MonthlyPnlPoint } from "./performanceTypes";
 
 interface Props {
-  snapshots: DailySnapshot[];
+  data: MonthlyPnlPoint[];
 }
 
-export function MonthlyPnlGrid({ snapshots }: Props) {
+export function MonthlyPnlGrid({ data }: Props) {
   const monthlyData: Record<string, Record<number, number>> = {};
 
-  for (const s of snapshots) {
-    const [yearStr, monthStr] = s.snapshot_date.split("-");
+  for (const p of data) {
+    const [yearStr, monthStr] = p.month.split("-");
     const year = yearStr;
     const month = parseInt(monthStr) - 1;
     if (!monthlyData[year]) monthlyData[year] = {};
-    monthlyData[year][month] = (monthlyData[year][month] || 0) + s.realised_pnl;
+    monthlyData[year][month] = (monthlyData[year][month] || 0) + p.pnl;
   }
 
   const years = Object.keys(monthlyData).sort();
   const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-  if (years.length === 0) return null;
+  if (years.length === 0) {
+    return (
+      <div className="flex h-24 items-center justify-center text-[var(--neu-text-soft)]">
+        No monthly P&L data
+      </div>
+    );
+  }
 
   return (
     <div className="overflow-x-auto">
@@ -50,7 +56,10 @@ export function MonthlyPnlGrid({ snapshots }: Props) {
                   const color = val >= 0 ? "text-emerald-500 dark:text-emerald-400 bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20" : "text-destructive bg-destructive/10 dark:bg-destructive/5 border border-destructive/20";
                   return (
                     <td key={idx} className="p-1 text-center">
-                      <div className={`py-1.5 px-2 rounded-lg font-medium tabular-nums ${color}`}>
+                      <div
+                        className={`py-1.5 px-2 rounded-lg font-medium tabular-nums ${color}`}
+                        aria-label={`${months[idx]} ${year}: ${val >= 0 ? "profit" : "loss"} ${Math.abs(val).toFixed(2)} USDT`}
+                      >
                         {val >= 0 ? "+$" : "-$"}{Math.abs(val).toFixed(2)}
                       </div>
                     </td>

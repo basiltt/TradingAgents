@@ -1,81 +1,49 @@
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { useId } from "react";
-import type { DailySnapshot } from "@/api/client";
+import type { DrawdownPoint } from "./performanceTypes";
 
 interface Props {
-  snapshots: DailySnapshot[];
+  data: DrawdownPoint[];
 }
 
-export function DrawdownChart({ snapshots }: Props) {
+export function DrawdownChart({ data }: Props) {
   const gradId = useId().replace(/:/g, "");
-  const data = snapshots.map((s) => ({
-    date: s.snapshot_date,
-    drawdown: -(Math.abs(Math.round(s.drawdown_pct * 100) / 100)),
+  if (data.length === 0) {
+    return (
+      <figure
+        role="img"
+        aria-label="Drawdown chart: no data"
+        className="flex h-[260px] items-center justify-center text-[var(--neu-text-soft)]"
+      >
+        No drawdown data
+      </figure>
+    );
+  }
+  const rows = data.map((p) => ({
+    t: p.t,
+    dd: Math.round((p.drawdown_pct ?? p.drawdown_abs ?? 0) * 100) / 100,
   }));
-
-  if (data.length === 0) return null;
-
-  const minDD = Math.min(data.reduce((min, d) => d.drawdown < min ? d.drawdown : min, data[0].drawdown) * 1.1, -0.1);
-
+  const usesPct = data.some((p) => p.drawdown_pct != null);
   return (
-    <ResponsiveContainer width="100%" height={200}>
-      <AreaChart data={data}>
-        <defs>
-          <linearGradient id={`dd-${gradId}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor="var(--destructive)" stopOpacity={0.3} />
-            <stop offset="95%" stopColor="var(--destructive)" stopOpacity={0} />
-          </linearGradient>
-        </defs>
-        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
-        <XAxis
-          dataKey="date"
-          tick={{ fill: "var(--muted-foreground)", fontSize: 10 }}
-          tickLine={false}
-          axisLine={false}
-          tickFormatter={(v: string) => {
-            if (v.includes(" ")) {
-              const [, time] = v.split(" ");
-              return time.slice(0, 5);
-            }
-            const [, m, d] = v.split("-");
-            return `${parseInt(m)}/${parseInt(d)}`;
-          }}
-        />
-        <YAxis
-          tick={{ fill: "var(--muted-foreground)", fontSize: 10 }}
-          tickLine={false}
-          axisLine={false}
-          domain={[minDD, 0]}
-          tickFormatter={(v: number) => `${v.toFixed(1)}%`}
-        />
-        <Tooltip
-          contentStyle={{
-            backgroundColor: "var(--card)",
-            border: "1px solid var(--border)",
-            borderRadius: "12px",
-            fontSize: 11,
-          }}
-          formatter={(value: unknown) => [`${Number(value).toFixed(2)}%`, "Drawdown"]}
-          labelFormatter={(label: unknown) => {
-            const s = String(label);
-            if (s.includes(" ")) {
-              const [datePart, time] = s.split(" ");
-              const [y, m, d] = datePart.split("-");
-              return `${parseInt(m)}/${parseInt(d)}/${y} ${time}`;
-            }
-            const [y, m, d] = s.split("-");
-            return `${parseInt(m)}/${parseInt(d)}/${y}`;
-          }}
-        />
-        <Area
-          type="monotone"
-          dataKey="drawdown"
-          stroke="var(--destructive)"
-          strokeWidth={1.5}
-          fill={`url(#dd-${gradId})`}
-          dot={false}
-        />
-      </AreaChart>
-    </ResponsiveContainer>
+    <figure role="img" aria-label="Drawdown underwater chart">
+      <ResponsiveContainer width="100%" height={260}>
+        <AreaChart data={rows}>
+          <defs>
+            <linearGradient id={`dd-${gradId}`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="var(--neu-danger)" stopOpacity={0} />
+              <stop offset="100%" stopColor="var(--neu-danger)" stopOpacity={0.35} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid stroke="var(--neu-stroke-soft)" strokeDasharray="3 3" />
+          <XAxis dataKey="t" tick={{ fill: "var(--neu-text-soft)", fontSize: 11 }} minTickGap={32} />
+          <YAxis
+            tick={{ fill: "var(--neu-text-soft)", fontSize: 11 }}
+            tickFormatter={(v) => (usesPct ? `${v}%` : `${v}`)}
+          />
+          <Tooltip />
+          <Area type="monotone" dataKey="dd" stroke="var(--neu-danger)" fill={`url(#dd-${gradId})`} />
+        </AreaChart>
+      </ResponsiveContainer>
+    </figure>
   );
 }

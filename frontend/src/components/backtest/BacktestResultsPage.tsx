@@ -17,7 +17,7 @@ import { extractCooloff, cooloffReasonLabel } from "./cooloffResults";
 import { TradeListTable } from "./TradeListTable";
 import { BacktestAnalysisTab } from "./BacktestAnalysisTab";
 import { addToBasket, isInBasket, MAX_BASKET, getBasket } from "./comparisonBasket";
-import { formatUsd, formatPct, formatRatio } from "./format";
+import { formatUsd, formatPct, formatRatio } from "@/lib/format";
 
 export interface BacktestResultsPageProps {
   runId: string;

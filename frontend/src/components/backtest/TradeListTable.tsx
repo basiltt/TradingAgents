@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { BacktestTrade } from "./types";
 import { StrategyChip } from "@/components/trades/StrategyChip";
-import { formatUsd, formatPct, formatDateTime, pnlColorClass, TH_CLASS, formatCloseReason } from "./format";
+import { formatUsd, formatPct, formatDateTime, pnlColorClass, TH_CLASS, formatCloseReason } from "@/lib/format";
 import { downloadCsv } from "./csvDownload";
 import {
   type TradeSortKey,

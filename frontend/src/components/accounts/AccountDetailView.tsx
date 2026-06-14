@@ -15,7 +15,7 @@ import { PositionsTable } from "./PositionsTable";
 import { OrdersTable } from "./OrdersTable";
 import { PnLPanel } from "./PnLPanel";
 import { StrategyTab } from "./StrategyTab";
-import { AnalyticsDashboard } from "@/components/analytics/AnalyticsDashboard";
+import { PerformanceDashboard } from "@/components/analytics/PerformanceDashboard";
 import { useAppDispatch, useAppSelector } from "@/store";
 import type { RootState } from "@/store";
 import { fetchAIManagerStatus } from "@/store/ai-manager-slice";
@@ -431,7 +431,7 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
           { value: "orders", label: <>Orders{orders.length > 0 && <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded-full bg-[color-mix(in_oklch,var(--neu-accent)_15%,var(--neu-surface-base))] text-[var(--neu-accent)] font-semibold tabular-nums">{orders.length}</span>}</>, content: <OrdersTable orders={orders} /> },
           { value: "pnl", label: "PnL", content: <PnLPanel pnlSummary={pnlSummary} accountId={accountId} /> },
           { value: "strategy", label: "Strategy", content: <StrategyTab accountId={accountId} /> },
-          { value: "analytics", label: "Analytics", content: <AnalyticsDashboard accountId={accountId} embedded /> },
+          { value: "analytics", label: "Analytics", content: <PerformanceDashboard accountId={accountId} embedded /> },
           {
             value: "ai-monitor",
             label: (

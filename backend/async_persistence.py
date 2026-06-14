@@ -1734,6 +1734,8 @@ CREATE TABLE IF NOT EXISTS account_cooloff_state (
     # CONCURRENTLY (the transactional migration runner rejects CONCURRENTLY).
     (65, "CREATE INDEX IF NOT EXISTS idx_scan_results_completed_at "
          "ON scan_results(completed_at DESC NULLS LAST, id DESC) WHERE ABS(score) >= 6"),
+    (66, "CREATE INDEX IF NOT EXISTS idx_trades_closed_at "
+         "ON trades (closed_at) WHERE status = 'closed'"),
 ]
 
 
@@ -2792,6 +2794,189 @@ class AsyncAnalysisDB:
         sql += "ORDER BY ds.snapshot_date ASC"
         rows = await self.pool.fetch(sql, *params)
         return [dict(r) for r in rows]
+
+    # ── Performance analytics (trades-derived, spec 2026-06-14) ──────────────
+
+    async def get_performance_trades(
+        self, *, account_ids: list[str] | None = None,
+        account_type: str | None = None,
+        start: "datetime | None" = None, end: "datetime | None" = None,
+    ) -> list[dict]:
+        """Canonical closed-trade set for performance analytics (spec §4.1).
+
+        Includes partial-close children (NO parent_trade_id filter); excludes
+        partially_closed parents and exit_price=0/external placeholder rows.
+        Joined to active, non-deleted, analytics-included accounts.
+        Ordered by closed_at ASC, id ASC (deterministic). `end` is exclusive.
+        """
+        sql = (
+            "SELECT t.id, t.account_id, t.symbol, t.side, t.net_pnl, t.realized_pnl, "
+            "t.realized_pnl_pct, t.base_capital, t.close_reason, t.strategy_kind, "
+            "t.opened_at, t.closed_at, t.leverage "
+            "FROM trades t "
+            "JOIN trading_accounts ta ON ta.id = t.account_id "
+            "WHERE t.status = 'closed' AND t.closed_at IS NOT NULL AND t.exit_price > 0 "
+            "AND ta.deleted_at IS NULL AND ta.is_active = 1 "
+            "AND ta.include_in_analytics = TRUE "
+        )
+        params: list = []
+        if account_ids is not None:
+            params.append(account_ids)
+            sql += f"AND t.account_id = ANY(${len(params)}) "
+        if account_type:
+            params.append(account_type)
+            sql += f"AND ta.account_type = ${len(params)} "
+        if start is not None:
+            params.append(start)
+            sql += f"AND t.closed_at >= ${len(params)} "
+        if end is not None:
+            params.append(end)
+            sql += f"AND t.closed_at < ${len(params)} "
+        sql += "ORDER BY t.closed_at ASC, t.id ASC"
+        rows = await self.pool.fetch(sql, *params)
+        return [dict(r) for r in rows]
+
+    async def get_account_first_cycle_equity(self, account_ids: list[str]) -> dict[str, float]:
+        """Per account: earliest non-null trading_cycles.initial_equity (by created_at).
+
+        Returns {account_id: initial_equity} only for accounts that have one.
+        """
+        if not account_ids:
+            return {}
+        rows = await self.pool.fetch(
+            "SELECT DISTINCT ON (account_id) account_id, initial_equity "
+            "FROM trading_cycles "
+            "WHERE account_id = ANY($1) AND initial_equity IS NOT NULL "
+            "ORDER BY account_id, created_at ASC",
+            account_ids,
+        )
+        return {r["account_id"]: float(r["initial_equity"]) for r in rows}
+
+    async def get_account_first_trade_capital(self, account_ids: list[str]) -> dict[str, float]:
+        """Per account: first trade's base_capital (by opened_at), where non-null."""
+        if not account_ids:
+            return {}
+        rows = await self.pool.fetch(
+            "SELECT DISTINCT ON (account_id) account_id, base_capital "
+            "FROM trades "
+            "WHERE account_id = ANY($1) AND base_capital IS NOT NULL "
+            "ORDER BY account_id, opened_at ASC NULLS LAST",
+            account_ids,
+        )
+        return {r["account_id"]: float(r["base_capital"]) for r in rows}
+
+    async def get_scope_account_ids(
+        self, *, account_type: str | None = None, account_id: str | None = None,
+    ) -> list[str]:
+        """Resolve a performance scope to eligible account_ids.
+
+        Active, non-deleted, analytics-included. account_type filters live/demo;
+        account_id pins a single account. Currency note (spec §4.3): there is NO
+        per-trade settle_coin column, so v1 ASSUMES all in-scope accounts settle in
+        USDT and the page is labeled "USDT". Mixed-settlement portfolios are a
+        documented v1 limitation — no silent multi-currency sum.
+        """
+        sql = (
+            "SELECT id FROM trading_accounts "
+            "WHERE deleted_at IS NULL AND is_active = 1 AND include_in_analytics = TRUE "
+        )
+        params: list = []
+        if account_id:
+            params.append(account_id)
+            sql += f"AND id = ${len(params)} "
+        if account_type:
+            params.append(account_type)
+            sql += f"AND account_type = ${len(params)} "
+        sql += "ORDER BY id"
+        rows = await self.pool.fetch(sql, *params)
+        return [r["id"] for r in rows]
+
+    async def get_performance_trades_page(
+        self, *, account_ids: list[str] | None = None,
+        account_type: str | None = None,
+        start: "datetime | None" = None, end: "datetime | None" = None,
+        sort: str = "net_pnl", direction: str = "desc",
+        cursor: tuple | None = None, limit: int = 50,
+    ) -> tuple[list[dict], tuple | None, bool]:
+        """Keyset-paginated raw trade rows for the Trades tab.
+
+        Stable ordering: ``ORDER BY <col> <dir> NULLS LAST, id <dir>``. NULL net_pnl is
+        handled with explicit keyset predicates (no numeric-infinity sentinel, so the query
+        is portable to PostgreSQL < 14, and the cursor never carries a non-JSON ``-inf``).
+        The cursor is a ``(sort_value, id)`` tuple where ``sort_value`` may be ``None`` (the
+        NULL tail) and ``id`` is the trade UUID as a string. Cursor params are bound with the
+        column's real type (numeric/timestamptz/uuid) so asyncpg accepts page-2 fetches.
+        Returns (rows, next_cursor, has_more).
+        """
+        # whitelist sort columns -> real table columns (typed cursor binding below)
+        sort_cols = {"net_pnl": "t.net_pnl", "closed_at": "t.closed_at"}
+        col = sort_cols.get(sort, sort_cols["net_pnl"])
+        desc = direction.lower() != "asc"
+        order = "DESC" if desc else "ASC"
+        cmp = "<" if desc else ">"  # progression direction for non-null values
+
+        sql = (
+            "SELECT t.id, t.account_id, t.symbol, t.side, t.net_pnl, t.realized_pnl_pct, "
+            "t.base_capital, t.close_reason, t.strategy_kind, t.opened_at, t.closed_at, t.leverage "
+            "FROM trades t JOIN trading_accounts ta ON ta.id = t.account_id "
+            "WHERE t.status = 'closed' AND t.closed_at IS NOT NULL AND t.exit_price > 0 "
+            "AND ta.deleted_at IS NULL AND ta.is_active = 1 AND ta.include_in_analytics = TRUE "
+        )
+        params: list = []
+        if account_ids is not None:
+            params.append(account_ids)
+            sql += f"AND t.account_id = ANY(${len(params)}) "
+        if account_type:
+            params.append(account_type)
+            sql += f"AND ta.account_type = ${len(params)} "
+        if start is not None:
+            params.append(start)
+            sql += f"AND t.closed_at >= ${len(params)} "
+        if end is not None:
+            params.append(end)
+            sql += f"AND t.closed_at < ${len(params)} "
+        if cursor is not None:
+            sort_val, last_id = cursor
+            params.append(uuid.UUID(str(last_id)))  # id column is uuid -> bind a UUID
+            idp = f"${len(params)}"
+            if sort_val is None:
+                # already in the NULLS-LAST tail: only further NULL rows, ordered by id
+                sql += f"AND ({col} IS NULL AND t.id {cmp} {idp}) "
+            else:
+                params.append(datetime.fromisoformat(sort_val) if sort == "closed_at"
+                              else Decimal(str(sort_val)))
+                vp = f"${len(params)}"
+                # non-null progression, value-tie by id, then the entire NULL tail
+                sql += (f"AND ({col} {cmp} {vp} "
+                        f"OR ({col} = {vp} AND t.id {cmp} {idp}) "
+                        f"OR {col} IS NULL) ")
+        params.append(limit + 1)  # fetch one extra to detect has_more
+        sql += f"ORDER BY {col} {order} NULLS LAST, t.id {order} LIMIT ${len(params)}"
+
+        rows = [dict(r) for r in await self.pool.fetch(sql, *params)]
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        next_cursor: tuple | None = None
+        if has_more and rows:
+            last = rows[-1]
+            if sort == "closed_at":
+                sort_value: Any = last["closed_at"].isoformat()
+            else:
+                sort_value = float(last["net_pnl"]) if last["net_pnl"] is not None else None
+            next_cursor = (sort_value, str(last["id"]))  # id as str -> JSON-safe cursor
+        return rows, next_cursor, has_more
+
+    async def get_symbol_sectors(self, symbols: list[str]) -> dict[str, str]:
+        """Map open-position symbols to their sector (for Live-tab concentration).
+
+        DB-only lookup against symbol_sectors; symbols without a row map to "Other".
+        """
+        if not symbols:
+            return {}
+        rows = await self.pool.fetch(
+            "SELECT symbol, sector FROM symbol_sectors WHERE symbol = ANY($1)", symbols,
+        )
+        return {r["symbol"]: r["sector"] for r in rows}
 
     async def get_latest_snapshot(self, account_id: str) -> Optional[Dict[str, Any]]:
         """Return an account's most recent daily snapshot, or None if none exist."""

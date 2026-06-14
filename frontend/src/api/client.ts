@@ -12,6 +12,7 @@ import type {
   TradeStatsResponse,
   TradeEventsResponse,
 } from "@/components/trades/types";
+import type { PerformanceOverview, TradesBreakdown, TradesPage, SignalSummary, SignalWinRate, PerformanceLive } from "@/components/analytics/performanceTypes";
 import type {
   BacktestRun,
   BacktestCreateRequest,
@@ -989,6 +990,62 @@ export interface PlaceTradeResponse {
   qty: string;
   usdt_amount: string;
 }
+
+/** Performance analytics API — trades-derived KPIs, equity curve, breakdowns, live. */
+export const performanceApi = {
+  getOverview: (scope: string, timeframe: string, signal?: AbortSignal) =>
+    request<PerformanceOverview>(
+      buildQuery("/api/v1/performance/overview", { scope, timeframe }),
+      undefined,
+      signal,
+    ),
+  getTradesBreakdown: (scope: string, timeframe: string, signal?: AbortSignal) =>
+    request<TradesBreakdown>(
+      buildQuery("/api/v1/performance/trades-breakdown", { scope, timeframe }),
+      undefined,
+      signal,
+    ),
+  getTradesPage: (
+    scope: string, timeframe: string,
+    opts?: { sort?: string; dir?: string; cursor?: string; limit?: number },
+    signal?: AbortSignal,
+  ) =>
+    request<TradesPage>(
+      buildQuery("/api/v1/performance/trades", {
+        scope, timeframe,
+        sort: opts?.sort, dir: opts?.dir, cursor: opts?.cursor, limit: opts?.limit,
+      }),
+      undefined,
+      signal,
+    ),
+  getLive: (scope: string, signal?: AbortSignal) =>
+    request<PerformanceLive>(
+      buildQuery("/api/v1/performance/live", { scope }),
+      undefined,
+      signal,
+    ),
+};
+
+/**
+ * Signal-analytics API, scope-aware. The backend endpoints take a single optional
+ * account_id: scope "all"/"live"/"demo" omit it (all accounts); a concrete account id
+ * is passed through. (Per-type live/demo fan-out is a documented v1 simplification.)
+ */
+function _signalAccountId(scope: string): string | undefined {
+  return scope === "all" || scope === "live" || scope === "demo" ? undefined : scope;
+}
+export const signalAnalyticsApi = {
+  summary: (scope: string, signal?: AbortSignal) =>
+    request<SignalSummary>(
+      buildQuery("/api/v1/signal-analytics/summary", { account_id: _signalAccountId(scope) }),
+      undefined, signal,
+    ),
+  winRate: (scope: string, signal?: AbortSignal) =>
+    request<SignalWinRate>(
+      buildQuery("/api/v1/signal-analytics/win-rate", { account_id: _signalAccountId(scope) }),
+      undefined, signal,
+    ),
+};
 
 /** Accounts API — CRUD, portfolio, analytics, snapshots, and trade management endpoints. */
 export const accountsApi = {

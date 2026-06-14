@@ -1,73 +1,114 @@
-import type { PerformanceAnalytics } from "@/api/client";
-import { motion } from "framer-motion";
-import { springs } from "@/lib/motion-constants";
+import type { PerformanceKpis } from "./performanceTypes";
+import { formatUsd, formatPct, formatRatio, formatHours, formatInt, DASH, pnlColorClass } from "@/lib/format";
 
 interface Props {
-  analytics: PerformanceAnalytics;
+  kpis: PerformanceKpis;
+  /** When true (caller passes meta.trading_days < 10) collapse the Risk group to a notice. */
+  lowDataNotice?: boolean;
 }
 
-function KpiCard({ label, value, color, suffix = "", index = 0 }: { label: string; value: string | number; color?: string; suffix?: string; index?: number }) {
+type Tile = {
+  label: string;
+  value: string;          // pre-formatted (DASH for null)
+  numeric: number | null; // for color + sign aria
+  kind: "usd" | "pct" | "ratio" | "int" | "hours";
+};
+
+function colorFor(v: number | null, neutral = false): string {
+  if (v == null || neutral) return "text-[var(--neu-text-strong)]";
+  return pnlColorClass(v);
+}
+
+function ariaFor(label: string, v: number | null, kind: Tile["kind"]): string {
+  if (v == null) return `${label}: not available`;
+  const dir = v > 0 ? "positive" : v < 0 ? "negative" : "neutral";
+  const unit = kind === "usd" ? " USDT" : kind === "pct" ? " percent" : "";
+  return `${label}: ${v}${unit}, ${dir}`;
+}
+
+function TileCard({ tile }: { tile: Tile }) {
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 14, scale: 0.96 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ ...springs.snappy, delay: index * 0.04 }}
-      className="glass-card border border-border/50 bg-card/65 backdrop-blur-sm p-3 sm:p-4 rounded-xl sm:rounded-2xl shadow-sm hover:shadow-md transition-all duration-300 hover:scale-[1.02] hover:-translate-y-0.5 active:scale-[0.98]"
+    <div
+      role="group"
+      aria-label={ariaFor(tile.label, tile.numeric, tile.kind)}
+      className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-md)] p-3 sm:p-4"
     >
-      <div className={`text-base sm:text-xl font-black tracking-tight tabular-nums ${color || "text-foreground"}`}>
-        {value}{suffix}
+      <div className={`text-base sm:text-xl font-black tracking-tight tabular-nums ${colorFor(tile.numeric, tile.kind === "int")}`}>
+        {tile.value}
       </div>
-      <div className="text-[9px] sm:text-[10px] text-muted-foreground mt-0.5 sm:mt-1 uppercase tracking-wider font-extrabold">{label}</div>
-    </motion.div>
+      <div className="mt-0.5 text-[9px] sm:text-[10px] uppercase tracking-wider font-extrabold text-[var(--neu-text-soft)]">
+        {tile.label}
+      </div>
+    </div>
   );
 }
 
-function fmtCurrency(v: number): string {
-  return v < 0 ? `-$${Math.abs(v).toFixed(2)}` : `$${v.toFixed(2)}`;
+function f(value: number | null | undefined, kind: Tile["kind"], opts?: { sign?: boolean }): string {
+  if (value == null) return DASH;
+  switch (kind) {
+    case "usd": return formatUsd(value, { sign: opts?.sign });
+    case "pct": return formatPct(value, { sign: opts?.sign });
+    case "ratio": return formatRatio(value);
+    case "int": return formatInt(value);
+    case "hours": return formatHours(value);
+  }
 }
 
-export function KpiCards({ analytics }: Props) {
-  const totalReturn = analytics.total_return_pct;
-  const returnColor = totalReturn >= 0 ? "text-emerald-500" : "text-red-500";
-  const pnl = parseFloat(analytics.total_pnl) || 0;
-  const pnlColor = pnl >= 0 ? "text-emerald-500" : "text-red-500";
-  const avgWin = parseFloat(analytics.avg_win) || 0;
-  const avgLoss = Math.abs(parseFloat(analytics.avg_loss) || 0);
-  const expectancy = analytics.expectancy;
+function Group({ title, tiles }: { title: string; tiles: Tile[] }) {
+  return (
+    <section>
+      <h3 className="mb-2 text-[10px] uppercase tracking-wider font-extrabold text-[var(--neu-text-soft)]">{title}</h3>
+      <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-3 lg:grid-cols-5">
+        {tiles.map((t) => <TileCard key={t.label} tile={t} />)}
+      </div>
+    </section>
+  );
+}
+
+export function KpiCards({ kpis, lowDataNotice = false }: Props) {
+  const quality: Tile[] = [
+    { label: "Win Rate", value: f(kpis.win_rate, "pct"), numeric: kpis.win_rate, kind: "pct" },
+    { label: "Profit Factor", value: f(kpis.profit_factor, "ratio"), numeric: kpis.profit_factor, kind: "ratio" },
+    { label: "Expectancy", value: f(kpis.expectancy, "usd", { sign: true }), numeric: kpis.expectancy, kind: "usd" },
+    { label: "Avg Win", value: f(kpis.avg_win, "usd", { sign: true }), numeric: kpis.avg_win, kind: "usd" },
+    { label: "Avg Loss", value: f(kpis.avg_loss, "usd", { sign: true }), numeric: kpis.avg_loss, kind: "usd" },
+    { label: "Win/Loss", value: f(kpis.avg_win_loss_ratio, "ratio"), numeric: kpis.avg_win_loss_ratio, kind: "ratio" },
+  ];
+  const returns: Tile[] = [
+    { label: "Net P&L", value: f(kpis.net_pnl, "usd", { sign: true }), numeric: kpis.net_pnl, kind: "usd" },
+    { label: "Return", value: f(kpis.total_return_pct, "pct", { sign: true }), numeric: kpis.total_return_pct, kind: "pct" },
+    { label: "Gross P&L", value: f(kpis.realized_pnl_gross, "usd", { sign: true }), numeric: kpis.realized_pnl_gross, kind: "usd" },
+  ];
+  const consistency: Tile[] = [
+    { label: "Best Trade", value: f(kpis.best_trade, "usd", { sign: true }), numeric: kpis.best_trade, kind: "usd" },
+    { label: "Worst Trade", value: f(kpis.worst_trade, "usd", { sign: true }), numeric: kpis.worst_trade, kind: "usd" },
+    { label: "Win Streak", value: f(kpis.max_consecutive_wins, "int"), numeric: null, kind: "int" },
+    { label: "Loss Streak", value: f(kpis.max_consecutive_losses, "int"), numeric: null, kind: "int" },
+    { label: "Avg Hold", value: f(kpis.avg_hold_time_hours, "hours"), numeric: null, kind: "hours" },
+  ];
+  const risk: Tile[] = [
+    { label: "Max Drawdown", value: kpis.max_drawdown_pct != null ? f(kpis.max_drawdown_pct, "pct") : f(kpis.max_drawdown_abs, "usd"), numeric: kpis.max_drawdown_pct ?? kpis.max_drawdown_abs, kind: kpis.max_drawdown_pct != null ? "pct" : "usd" },
+    { label: "Sharpe", value: f(kpis.sharpe_ratio, "ratio"), numeric: kpis.sharpe_ratio, kind: "ratio" },
+    { label: "Sortino", value: f(kpis.sortino_ratio, "ratio"), numeric: kpis.sortino_ratio, kind: "ratio" },
+    { label: "Calmar", value: f(kpis.calmar_ratio, "ratio"), numeric: kpis.calmar_ratio, kind: "ratio" },
+    { label: "DD Duration", value: kpis.drawdown_duration_days != null ? `${kpis.drawdown_duration_days}d` : DASH, numeric: null, kind: "int" },
+  ];
 
   return (
-    <div className="space-y-2 sm:space-y-3">
-      {/* Primary KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2 sm:gap-3">
-        <KpiCard index={0} label="Total Return" value={`${totalReturn > 0 ? "+" : ""}${totalReturn}%`} color={returnColor} />
-        <KpiCard index={1} label="Total P&L" value={fmtCurrency(pnl)} color={pnlColor} />
-        <KpiCard index={2} label="Max Drawdown" value={`${analytics.max_drawdown_pct > 0 ? "-" : ""}${analytics.max_drawdown_pct}%`} color={analytics.max_drawdown_pct > 0 ? "text-red-500" : ""} />
-        <KpiCard index={3} label="Sharpe Ratio" value={analytics.sharpe_ratio} color={analytics.sharpe_ratio >= 1 ? "text-emerald-500" : analytics.sharpe_ratio >= 0 ? "text-yellow-500" : "text-red-500"} />
-        <KpiCard index={4} label="Win Rate" value={`${analytics.win_rate}%`} color={analytics.win_rate >= 50 ? "text-emerald-500" : "text-red-500"} />
-        <KpiCard index={5} label="Profit Factor" value={analytics.profit_factor} color={analytics.profit_factor >= 1 ? "text-emerald-500" : "text-red-500"} />
-      </div>
-
-      {/* Secondary KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2 sm:gap-3">
-        <KpiCard index={6} label="Sortino" value={analytics.sortino_ratio} />
-        <KpiCard index={7} label="Calmar" value={analytics.calmar_ratio} />
-        <KpiCard index={8} label="Expectancy" value={fmtCurrency(expectancy)} color={expectancy >= 0 ? "text-emerald-500" : "text-red-500"} />
-        <KpiCard index={9} label="Avg Daily" value={`${analytics.avg_daily_return_pct > 0 ? "+" : ""}${analytics.avg_daily_return_pct}%`} />
-        <KpiCard index={10} label="Best Day" value={`${analytics.best_day_pct > 0 ? "+" : ""}${analytics.best_day_pct}%`} color={analytics.best_day_pct > 0 ? "text-emerald-500" : ""} />
-        <KpiCard index={11} label="Worst Day" value={`${analytics.worst_day_pct}%`} color={analytics.worst_day_pct < 0 ? "text-red-500" : ""} />
-        <KpiCard index={12} label="Win Streak" value={analytics.max_consecutive_wins} color="text-emerald-500" />
-        <KpiCard index={13} label="Loss Streak" value={analytics.max_consecutive_losses} color="text-red-500" />
-      </div>
-
-      {/* Trade Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2 sm:gap-3">
-        <KpiCard index={14} label="Total Trades" value={analytics.total_trades} />
-        <KpiCard index={15} label="Wins" value={analytics.win_count} color="text-emerald-500" />
-        <KpiCard index={16} label="Losses" value={analytics.loss_count} color="text-red-500" />
-        <KpiCard index={17} label="Avg Win" value={fmtCurrency(avgWin)} color="text-emerald-500" />
-        <KpiCard index={18} label="Avg Loss" value={fmtCurrency(avgLoss)} color="text-red-500" />
-        <KpiCard index={19} label="DD Duration" value={`${analytics.drawdown_duration_days}d`} />
-      </div>
+    <div className="flex flex-col gap-4">
+      <Group title="Quality" tiles={quality} />
+      <Group title="Returns" tiles={returns} />
+      <Group title="Consistency" tiles={consistency} />
+      {lowDataNotice ? (
+        <section>
+          <h3 className="mb-2 text-[10px] uppercase tracking-wider font-extrabold text-[var(--neu-text-soft)]">Risk</h3>
+          <div className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-md)] p-4 text-sm text-[var(--neu-text-soft)]">
+            Risk metrics (Sharpe, Sortino, Calmar) need ≥10 trading days of history.
+          </div>
+        </section>
+      ) : (
+        <Group title="Risk" tiles={risk} />
+      )}
     </div>
   );
 }
