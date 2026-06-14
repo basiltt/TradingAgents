@@ -14,13 +14,31 @@ import type { PerformanceTimeframe } from "./performanceTypes";
 interface Props { embedded?: boolean; accountId?: string; }
 
 const STORAGE_KEY = "performance-filters";
+const VALID_TIMEFRAMES: ReadonlySet<string> = new Set([
+  "1D", "1W", "1M", "3M", "YTD", "1Y", "ALL",
+]);
+const DEFAULT_FILTERS: { scope: string; timeframe: PerformanceTimeframe } = {
+  scope: "all", timeframe: "ALL",
+};
 
 function loadFilters(): { scope: string; timeframe: PerformanceTimeframe } {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (!raw) return DEFAULT_FILTERS;
+    const parsed = JSON.parse(raw);
+    // Validate shape AND timeframe membership: a corrupt object, a non-object, or a stale
+    // timeframe token (e.g. one removed in a later release) must fall back to defaults --
+    // otherwise it flows to the API, 422s, and the Retry button re-sends the same bad value.
+    if (
+      parsed && typeof parsed === "object" &&
+      typeof parsed.scope === "string" &&
+      typeof parsed.timeframe === "string" &&
+      VALID_TIMEFRAMES.has(parsed.timeframe)
+    ) {
+      return { scope: parsed.scope, timeframe: parsed.timeframe as PerformanceTimeframe };
+    }
   } catch { /* ignore */ }
-  return { scope: "all", timeframe: "ALL" };
+  return DEFAULT_FILTERS;
 }
 
 export function PerformanceDashboard({ embedded = false, accountId }: Props) {
@@ -53,6 +71,21 @@ export function PerformanceDashboard({ embedded = false, accountId }: Props) {
   }
 
   const hasTrades = (data?.kpis.total_trades ?? 0) > 0;
+  // Overview shows the trade-derived dashboard, or an honest empty card when the selected
+  // window has no closed trades. Live & Signals are timeframe-independent (open positions /
+  // signal coverage), so they must stay reachable even when hasTrades is false -- gating the
+  // whole tab strip on window-scoped trade count would hide live positions for a fresh or
+  // recently-quiet account.
+  const overviewContent = data && (hasTrades ? (
+    <OverviewTab overview={data} />
+  ) : (
+    <div className="neu-surface-base rounded-[var(--neu-radius-md)] p-10 text-center">
+      <p className="text-[var(--neu-text-strong)]">No closed trades in this range</p>
+      <p className="mt-1 text-[var(--neu-text-soft)]">
+        Adjust the timeframe, or check the Live tab for open positions.
+      </p>
+    </div>
+  ));
 
   return (
     <div className="flex flex-col gap-4">
@@ -83,26 +116,17 @@ export function PerformanceDashboard({ embedded = false, accountId }: Props) {
       {data && (
         <>
           <PerformanceHeroStrip overview={data} />
-          {hasTrades ? (
-            <NeuTabs
-              value={tab}
-              onValueChange={setTab}
-              variant="inset"
-              items={[
-                { value: "overview", label: "Overview", content: <OverviewTab overview={data} /> },
-                { value: "trades", label: "Trades", content: <TradesTab scope={effectiveScope} timeframe={timeframe} /> },
-                { value: "signals", label: "Signals", content: <SignalsTab scope={effectiveScope} /> },
-                { value: "live", label: "Live", content: <LiveTab scope={effectiveScope} /> },
-              ]}
-            />
-          ) : (
-            <div className="neu-surface-base rounded-[var(--neu-radius-md)] p-10 text-center">
-              <p className="text-[var(--neu-text-strong)]">No closed trades yet</p>
-              <p className="mt-1 text-[var(--neu-text-soft)]">
-                Run the Scanner or enable Auto-Trade to start building performance.
-              </p>
-            </div>
-          )}
+          <NeuTabs
+            value={tab}
+            onValueChange={setTab}
+            variant="inset"
+            items={[
+              { value: "overview", label: "Overview", content: overviewContent },
+              { value: "trades", label: "Trades", content: <TradesTab scope={effectiveScope} timeframe={timeframe} /> },
+              { value: "signals", label: "Signals", content: <SignalsTab scope={effectiveScope} /> },
+              { value: "live", label: "Live", content: <LiveTab scope={effectiveScope} /> },
+            ]}
+          />
         </>
       )}
     </div>

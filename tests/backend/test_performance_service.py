@@ -347,6 +347,74 @@ class TestComputeOverview:
         assert result["kpis"]["total_return_pct"] == pytest.approx(10.0)
         assert result["meta"]["starting_equity"] == pytest.approx(100.0)
 
+    @pytest.mark.asyncio
+    async def test_null_D_scope_still_reports_absolute_drawdown(self):
+        # Regression: when no account has a starting equity (D None), the curve still shows
+        # dips, so the ABSOLUTE-dollar drawdown must be computed over the in-scope trades --
+        # NOT left at $0.00 (which previously happened because the D-relative subset was
+        # empty). Trades: +10 then -40 -> a $40 absolute drawdown from the running peak.
+        from unittest.mock import AsyncMock, MagicMock
+        from backend.services.performance_service import PerformanceService
+
+        anchor = datetime(2026, 6, 14, 12, tzinfo=timezone.utc)
+        trades = [_t(10.0, datetime(2026, 5, 1, tzinfo=timezone.utc), _id=1, account_id="a1",
+                     opened_at=datetime(2026, 5, 1, tzinfo=timezone.utc)),
+                  _t(-40.0, datetime(2026, 5, 5, tzinfo=timezone.utc), _id=2, account_id="a1",
+                     opened_at=datetime(2026, 5, 5, tzinfo=timezone.utc))]
+        db = MagicMock()
+        db.get_scope_account_ids = AsyncMock(return_value=["a1"])
+        db.get_performance_trades = AsyncMock(return_value=trades)
+        db.get_account_first_cycle_equity = AsyncMock(return_value={})  # no cycle
+        db.get_account_first_trade_capital = AsyncMock(return_value={})  # no base_capital -> D None
+        svc = PerformanceService(db=db, accounts_service=None)
+        result = await svc.compute_overview(scope="all", timeframe="ALL", anchor=anchor)
+        k = result["kpis"]
+        assert result["meta"]["starting_equity"] is None     # D is None
+        assert k["max_drawdown_pct"] is None                 # no %-basis without D
+        # absolute drawdown reflects the real dip (peak +10 -> trough -30 = -40), not 0.0
+        assert k["max_drawdown_abs"] == pytest.approx(-40.0)
+        assert len(result["drawdown_series"]) == 2           # series populated, not empty
+        # duration is computed on the abs path too (no longer forced to None)
+        assert k["drawdown_duration_days"] is not None
+
+    @pytest.mark.asyncio
+    async def test_kpis_prev_windows_only_prior_period_and_excludes_null_D(self):
+        # Value-level guard for _compute_prev (the hero delta engine): the prior equal-length
+        # window must count ONLY prior-window trades, and a null-D account's P&L must not
+        # enter the D-relative total_equity proxy (aggregate null-D rule).
+        from unittest.mock import AsyncMock, MagicMock
+        from backend.services.performance_service import PerformanceService
+
+        anchor = datetime(2026, 6, 14, 12, tzinfo=timezone.utc)
+        # 1M window => current = [2026-05-14, anchor); prev = [2026-04-14, 2026-05-14)
+        trades = [
+            # prior window (a1 contributes to D; a2 is null-D)
+            _t(7.0, datetime(2026, 4, 20, 8, tzinfo=timezone.utc), _id=1, account_id="a1"),
+            _t(3.0, datetime(2026, 5, 1, 8, tzinfo=timezone.utc), _id=2, account_id="a1"),
+            _t(50.0, datetime(2026, 4, 25, 8, tzinfo=timezone.utc), _id=3, account_id="a2"),
+            # current window (must NOT count toward prev)
+            _t(99.0, datetime(2026, 6, 1, 8, tzinfo=timezone.utc), _id=4, account_id="a1"),
+            # before prev window (must NOT count toward prev)
+            _t(11.0, datetime(2026, 3, 1, 8, tzinfo=timezone.utc), _id=5, account_id="a1"),
+        ]
+        db = MagicMock()
+        db.get_scope_account_ids = AsyncMock(return_value=["a1", "a2"])
+        db.get_performance_trades = AsyncMock(return_value=trades)
+        db.get_account_first_cycle_equity = AsyncMock(return_value={"a1": 100.0})  # only a1 -> D=100
+        db.get_account_first_trade_capital = AsyncMock(return_value={})
+        svc = PerformanceService(db=db, accounts_service=None)
+        result = await svc.compute_overview(scope="all", timeframe="1M", anchor=anchor)
+        prev = result["kpis_prev"]
+        assert prev is not None
+        # net_pnl/total_trades count ONLY the prior WINDOW [2026-04-14, 2026-05-14): 7+3+50.
+        # (current-window id=4 and pre-window id=5 are excluded from these.)
+        assert prev["net_pnl"] == pytest.approx(60.0)
+        assert prev["total_trades"] == 3
+        # total_equity is the realized equity PROXY at prev-window-end (spec §10): D + ALL
+        # D-relative (a1) realized P&L up to prev_end = 100 + (7 + 3 + 11) = 121. The older
+        # a1 trade id=5 IS in the cumulative proxy; a2's 50 is excluded (a2 is null-D).
+        assert prev["total_equity"] == pytest.approx(121.0)
+
 
 class TestComputeBreakdowns:
     def test_by_symbol_strategy_close_reason(self):
@@ -467,3 +535,83 @@ class TestComputeLive:
         res = await svc.compute_live(scope="all")
         assert res["degraded"] is True
         assert res["positions"] == []
+
+    @pytest.mark.asyncio
+    async def test_upl_pct_derived_from_size_times_entry_not_position_value(self):
+        # Regression: bybit_client.get_positions never returns `positionValue`, so the
+        # unrealized % MUST be derived from size*entry. A dict WITHOUT positionValue must
+        # still produce a non-null upl_pct (previously it was always None).
+        from unittest.mock import AsyncMock, MagicMock
+        from backend.services.performance_service import PerformanceService
+
+        db = MagicMock()
+        db.get_scope_account_ids = AsyncMock(return_value=["a1"])
+        db.get_symbol_sectors = AsyncMock(return_value={"BTCUSDT": "l1"})
+        accounts = MagicMock()
+        accounts.get_dashboard = AsyncMock(return_value=[
+            {"id": "a1", "label": "A1", "account_type": "live", "total_equity": "100",
+             "today_pnl": "1", "positions_count": 1}])
+        accounts.get_positions = AsyncMock(return_value=[
+            {"symbol": "BTCUSDT", "side": "Buy", "size": "0.1", "leverage": "20",
+             "avgPrice": "2950", "unrealisedPnl": "-1.6"}])  # NO positionValue key
+        svc = PerformanceService(db=db, accounts_service=accounts)
+        res = await svc.compute_live(scope="all")
+        pos = res["positions"][0]
+        # notional = 0.1*2950 = 295 ; upl_pct = -1.6/295*100
+        assert pos["unrealized_pnl_pct"] == pytest.approx(-1.6 / 295 * 100)
+        assert res["degraded"] is False
+
+    @pytest.mark.asyncio
+    async def test_malformed_card_equity_does_not_500_the_tab(self):
+        # Regression (fail-soft): a non-numeric card money string must coerce to None,
+        # not raise -- tile construction is outside the per-account try/except.
+        from unittest.mock import AsyncMock, MagicMock
+        from backend.services.performance_service import PerformanceService
+
+        db = MagicMock()
+        db.get_scope_account_ids = AsyncMock(return_value=["a1"])
+        db.get_symbol_sectors = AsyncMock(return_value={})
+        accounts = MagicMock()
+        accounts.get_dashboard = AsyncMock(return_value=[
+            {"id": "a1", "label": "A1", "account_type": "live",
+             "total_equity": "N/A", "today_pnl": "1,234.5", "positions_count": "oops"}])
+        accounts.get_positions = AsyncMock(return_value=[])
+        svc = PerformanceService(db=db, accounts_service=accounts)
+        res = await svc.compute_live(scope="all")  # must not raise
+        tile = res["account_tiles"][0]
+        assert tile["equity"] is None          # "N/A" -> None
+        assert tile["today_pnl"] is None        # "1,234.5" unparseable -> None
+        assert tile["positions_count"] == 0     # "oops" -> 0
+
+
+class TestLiveOverlay:
+    @pytest.mark.asyncio
+    async def test_partial_overlay_sums_reporting_accounts_and_degrades(self):
+        # Regression (M1): one disabled account (total_equity None) must NOT blank the whole
+        # scope -- sum the accounts that reported and flag degraded.
+        from unittest.mock import AsyncMock, MagicMock
+        from backend.services.performance_service import PerformanceService
+        accounts = MagicMock()
+        accounts.get_dashboard = AsyncMock(return_value=[
+            {"id": "a1", "total_equity": "100", "total_perp_upl": "5", "positions_count": 2},
+            {"id": "a2", "total_equity": None, "total_perp_upl": None, "positions_count": None},
+        ])
+        svc = PerformanceService(db=MagicMock(), accounts_service=accounts)
+        overlay, degraded = await svc._live_overlay(["a1", "a2"])
+        assert overlay["total_equity"] == pytest.approx(100.0)  # a1 only, a2 not nulled away
+        assert overlay["open_count"] == 2
+        assert degraded is True  # a2 missing
+
+
+class TestStartingEquityFallback:
+    def test_nonpositive_cycle_equity_falls_back_to_first_trade_capital(self):
+        # Regression: a junk cycle row (initial_equity 0 or negative) must not suppress the
+        # base_capital fallback or silently drop the account from D.
+        from backend.services.performance_service import compute_starting_equity
+        D, contrib = compute_starting_equity(
+            account_ids=["a1", "a2"],
+            cycle_equity={"a1": 0.0, "a2": -5.0},
+            first_trade_capital={"a1": 80.0, "a2": 50.0},
+        )
+        assert D == pytest.approx(130.0)
+        assert contrib == {"a1", "a2"}

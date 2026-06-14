@@ -58,7 +58,7 @@ export function LiveTab({ scope }: Props) {
               </thead>
               <tbody>
                 {data.positions.map((p: LivePosition, i: number) => (
-                  <tr key={`${p.account_id}-${p.symbol}-${i}`} className="border-t border-[var(--neu-border)]">
+                  <tr key={`${p.account_id}-${p.symbol}-${i}`} className="border-t border-[var(--neu-stroke-soft)]">
                     <td className="p-1 font-medium">{p.symbol}</td>
                     <td className="p-1">{p.side}</td>
                     <td className="p-1 text-right tabular-nums">{p.size}</td>

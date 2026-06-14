@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { useTradesBreakdown, useTradesPage } from "../hooks/usePerformance";
 import { formatUsd, formatPct, pnlColorClass, DASH } from "@/lib/format";
@@ -39,13 +38,14 @@ function PnlCell({ value }: { value: number | null }) {
 
 export function TradesTab({ scope, timeframe }: Props) {
   const { data: bd, isLoading: bdLoading } = useTradesBreakdown(scope, timeframe);
-  const [cursor, setCursor] = useState<string | undefined>(undefined);
-  const { data: page } = useTradesPage(scope, timeframe, "net_pnl", "desc", cursor);
+  const { data: pages, fetchNextPage, hasNextPage, isFetchingNextPage } =
+    useTradesPage(scope, timeframe, "net_pnl", "desc");
 
   if (bdLoading || !bd) {
     return <div className="h-40 animate-pulse rounded-[var(--neu-radius-md)] neu-surface-base" />;
   }
 
+  const rows: TradeRow[] = (pages?.pages ?? []).flatMap((p) => p.rows);
   const donut = bd.by_close_reason.map((r) => ({ name: reasonLabel(r.reason), value: r.count }));
 
   return (
@@ -80,7 +80,7 @@ export function TradesTab({ scope, timeframe }: Props) {
             </thead>
             <tbody>
               {bd.by_symbol.map((r) => (
-                <tr key={r.symbol} className="border-t border-[var(--neu-border)]">
+                <tr key={r.symbol} className="border-t border-[var(--neu-stroke-soft)]">
                   <td className="p-1 font-medium">{r.symbol}</td>
                   <td className="p-1 text-right tabular-nums">{r.trades}</td>
                   <td className="p-1 text-right tabular-nums">{r.win_rate != null ? formatPct(r.win_rate) : DASH}</td>
@@ -132,8 +132,8 @@ export function TradesTab({ scope, timeframe }: Props) {
               </tr>
             </thead>
             <tbody>
-              {(page?.rows ?? []).map((t: TradeRow) => (
-                <tr key={t.id} className="border-t border-[var(--neu-border)]">
+              {rows.map((t: TradeRow) => (
+                <tr key={t.id} className="border-t border-[var(--neu-stroke-soft)]">
                   <td className="p-1 font-medium">{t.symbol}</td>
                   <td className="p-1">{t.side}</td>
                   <td className="p-1 text-right tabular-nums"><PnlCell value={t.net_pnl} /></td>
@@ -145,13 +145,14 @@ export function TradesTab({ scope, timeframe }: Props) {
             </tbody>
           </table>
         </div>
-        {page?.has_more && (
+        {hasNextPage && (
           <button
             type="button"
-            onClick={() => setCursor(page.cursor ?? undefined)}
-            className="mt-2 rounded-[var(--neu-radius-md)] neu-surface-base neu-surface-raised px-3 py-1 text-sm"
+            onClick={() => fetchNextPage()}
+            disabled={isFetchingNextPage}
+            className="mt-2 rounded-[var(--neu-radius-md)] neu-surface-base neu-surface-raised px-3 py-1 text-sm disabled:opacity-50"
           >
-            Load more
+            {isFetchingNextPage ? "Loading…" : "Load more"}
           </button>
         )}
       </section>

@@ -34,7 +34,7 @@ export function DrawdownChart({ data }: Props) {
               <stop offset="100%" stopColor="var(--neu-danger)" stopOpacity={0.35} />
             </linearGradient>
           </defs>
-          <CartesianGrid stroke="var(--neu-border)" strokeDasharray="3 3" />
+          <CartesianGrid stroke="var(--neu-stroke-soft)" strokeDasharray="3 3" />
           <XAxis dataKey="t" tick={{ fill: "var(--neu-text-soft)", fontSize: 11 }} minTickGap={32} />
           <YAxis
             tick={{ fill: "var(--neu-text-soft)", fontSize: 11 }}

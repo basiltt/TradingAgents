@@ -12,7 +12,7 @@ export function OverviewTab({ overview }: { overview: PerformanceOverview }) {
       <section className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-md)] p-4">
         <EquityCurveChart
           data={overview.equity_curve}
-          startingEquity={overview.meta.live_equity_available ? overview.meta.starting_equity : null}
+          startingEquity={overview.meta.starting_equity}
           equityNow={overview.equity_now}
         />
       </section>

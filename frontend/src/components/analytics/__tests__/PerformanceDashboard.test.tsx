@@ -42,6 +42,18 @@ describe("PerformanceDashboard", () => {
     await waitFor(() => expect(document.body.textContent).toMatch(/no closed trades/i));
   });
 
+  it("keeps the Live and Signals tabs reachable even with zero closed trades", async () => {
+    // Regression: the tab strip must NOT be gated on window-scoped trade count -- Live
+    // (open positions) and Signals are timeframe-independent and must stay accessible.
+    (performanceApi.getOverview as ReturnType<typeof vi.fn>).mockResolvedValue(emptyOverview);
+    wrap(<PerformanceDashboard />);
+    await waitFor(() => expect(document.body.textContent).toMatch(/no closed trades/i));
+    // the tab triggers exist (NeuTabs rendered, not replaced by a bare empty card)
+    expect(screen.getByRole("tab", { name: /live/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /signals/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /overview/i })).toBeInTheDocument();
+  });
+
   it("embedded mode hides the scope selector and scopes to the account", async () => {
     (performanceApi.getOverview as ReturnType<typeof vi.fn>).mockResolvedValue(emptyOverview);
     wrap(<PerformanceDashboard embedded accountId="acc_1" />);

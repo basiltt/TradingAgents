@@ -109,7 +109,7 @@ export interface SignalSummary {
   avg_pnl_pct: number;
   total_pnl: number;
   avg_hold_minutes: number;
-  current_streak: number;
+  current_streak: string; // backend emits "" | "3W" | "2L" (count + W/L), not a number
   active_alerts: number;
 }
 export interface WinRatePoint { date: string | null; win_rate: number; trade_number: number; }

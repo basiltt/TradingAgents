@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useInfiniteQuery } from "@tanstack/react-query";
 import { performanceApi, signalAnalyticsApi } from "@/api/client";
 
 export const performanceKeys = {
@@ -31,12 +31,16 @@ export function useTradesBreakdown(scope: string, timeframe: string) {
 
 export function useTradesPage(
   scope: string, timeframe: string,
-  sort: string, dir: string, cursor?: string,
+  sort: string, dir: string,
 ) {
-  return useQuery({
-    queryKey: [...performanceKeys.trades(scope, timeframe, sort, dir), cursor ?? ""],
-    queryFn: ({ signal }) =>
-      performanceApi.getTradesPage(scope, timeframe, { sort, dir, cursor, limit: 50 }, signal),
+  return useInfiniteQuery({
+    queryKey: performanceKeys.trades(scope, timeframe, sort, dir),
+    queryFn: ({ pageParam, signal }) =>
+      performanceApi.getTradesPage(
+        scope, timeframe, { sort, dir, cursor: pageParam ?? undefined, limit: 50 }, signal,
+      ),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => (last.has_more ? last.cursor ?? undefined : undefined),
     staleTime: 60_000,
   });
 }

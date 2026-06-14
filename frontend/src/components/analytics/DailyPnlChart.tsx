@@ -22,7 +22,7 @@ export function DailyPnlChart({ data }: Props) {
     <figure role="img" aria-label="Daily profit and loss bars">
       <ResponsiveContainer width="100%" height={260}>
         <BarChart data={rows}>
-          <CartesianGrid stroke="var(--neu-border)" strokeDasharray="3 3" />
+          <CartesianGrid stroke="var(--neu-stroke-soft)" strokeDasharray="3 3" />
           <XAxis dataKey="date" tick={{ fill: "var(--neu-text-soft)", fontSize: 11 }} minTickGap={24} />
           <YAxis tick={{ fill: "var(--neu-text-soft)", fontSize: 11 }} />
           <Tooltip />

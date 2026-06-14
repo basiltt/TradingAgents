@@ -2900,20 +2900,20 @@ class AsyncAnalysisDB:
     ) -> tuple[list[dict], tuple | None, bool]:
         """Keyset-paginated raw trade rows for the Trades tab.
 
-        Stable ordering: ``ORDER BY <sort-expr> <dir>, id <dir>`` with NULL net_pnl coerced
-        via COALESCE so it can never skip/duplicate rows. The cursor is a (sort_value, id)
-        tuple; rows strictly after it (in the sort direction) are returned. Returns
-        (rows, next_cursor, has_more).
+        Stable ordering: ``ORDER BY <col> <dir> NULLS LAST, id <dir>``. NULL net_pnl is
+        handled with explicit keyset predicates (no numeric-infinity sentinel, so the query
+        is portable to PostgreSQL < 14, and the cursor never carries a non-JSON ``-inf``).
+        The cursor is a ``(sort_value, id)`` tuple where ``sort_value`` may be ``None`` (the
+        NULL tail) and ``id`` is the trade UUID as a string. Cursor params are bound with the
+        column's real type (numeric/timestamptz/uuid) so asyncpg accepts page-2 fetches.
+        Returns (rows, next_cursor, has_more).
         """
-        # whitelist sort columns -> SQL expressions (COALESCE the nullable money field)
-        sort_exprs = {
-            "net_pnl": "COALESCE(t.net_pnl, '-Infinity'::numeric)",
-            "closed_at": "t.closed_at",
-        }
-        expr = sort_exprs.get(sort, sort_exprs["net_pnl"])
+        # whitelist sort columns -> real table columns (typed cursor binding below)
+        sort_cols = {"net_pnl": "t.net_pnl", "closed_at": "t.closed_at"}
+        col = sort_cols.get(sort, sort_cols["net_pnl"])
         desc = direction.lower() != "asc"
         order = "DESC" if desc else "ASC"
-        cmp = "<" if desc else ">"
+        cmp = "<" if desc else ">"  # progression direction for non-null values
 
         sql = (
             "SELECT t.id, t.account_id, t.symbol, t.side, t.net_pnl, t.realized_pnl_pct, "
@@ -2937,14 +2937,21 @@ class AsyncAnalysisDB:
             sql += f"AND t.closed_at < ${len(params)} "
         if cursor is not None:
             sort_val, last_id = cursor
-            params.append(sort_val)
-            sv = f"${len(params)}"
-            params.append(last_id)
-            lid = f"${len(params)}"
-            # row-value keyset: (expr, id) strictly after the cursor in sort order
-            sql += f"AND ({expr}, t.id) {cmp} ({sv}, {lid}) "
+            params.append(uuid.UUID(str(last_id)))  # id column is uuid -> bind a UUID
+            idp = f"${len(params)}"
+            if sort_val is None:
+                # already in the NULLS-LAST tail: only further NULL rows, ordered by id
+                sql += f"AND ({col} IS NULL AND t.id {cmp} {idp}) "
+            else:
+                params.append(datetime.fromisoformat(sort_val) if sort == "closed_at"
+                              else Decimal(str(sort_val)))
+                vp = f"${len(params)}"
+                # non-null progression, value-tie by id, then the entire NULL tail
+                sql += (f"AND ({col} {cmp} {vp} "
+                        f"OR ({col} = {vp} AND t.id {cmp} {idp}) "
+                        f"OR {col} IS NULL) ")
         params.append(limit + 1)  # fetch one extra to detect has_more
-        sql += f"ORDER BY {expr} {order}, t.id {order} LIMIT ${len(params)}"
+        sql += f"ORDER BY {col} {order} NULLS LAST, t.id {order} LIMIT ${len(params)}"
 
         rows = [dict(r) for r in await self.pool.fetch(sql, *params)]
         has_more = len(rows) > limit
@@ -2952,9 +2959,11 @@ class AsyncAnalysisDB:
         next_cursor: tuple | None = None
         if has_more and rows:
             last = rows[-1]
-            sv = float(last["net_pnl"]) if last["net_pnl"] is not None else float("-inf")
-            sort_value = sv if sort == "net_pnl" else last["closed_at"].isoformat()
-            next_cursor = (sort_value, last["id"])
+            if sort == "closed_at":
+                sort_value: Any = last["closed_at"].isoformat()
+            else:
+                sort_value = float(last["net_pnl"]) if last["net_pnl"] is not None else None
+            next_cursor = (sort_value, str(last["id"]))  # id as str -> JSON-safe cursor
         return rows, next_cursor, has_more
 
     async def get_symbol_sectors(self, symbols: list[str]) -> dict[str, str]:

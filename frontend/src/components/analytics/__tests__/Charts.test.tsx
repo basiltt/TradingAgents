@@ -26,12 +26,26 @@ describe("EquityCurveChart", () => {
     expect(container.firstChild).not.toBeNull();
     expect(container.textContent).not.toContain("No closed trades");
   });
+
+  it("renders the live-equity path (secondary axis + now marker) without crashing", () => {
+    // Exercises the startingEquity + equityNow branch: explicit dual-axis domains and the
+    // anchored ReferenceDot. Must render the chart, not the empty state.
+    const { container } = render(
+      <EquityCurveChart
+        data={curve}
+        startingEquity={100}
+        equityNow={{ t: "2026-06-14T12:00:00Z", equity: 108 }}
+      />,
+    );
+    expect(container.firstChild).not.toBeNull();
+    expect(container.textContent).not.toContain("No closed trades");
+  });
 });
 
 describe("DrawdownChart", () => {
   it("renders an empty-state node when data is empty", () => {
     const { container } = render(<DrawdownChart data={[]} />);
-    expect(container.textContent).toContain("No");
+    expect(container.textContent).toContain("No drawdown data");
   });
 
   it("renders the underwater area from DrawdownPoint[]", () => {

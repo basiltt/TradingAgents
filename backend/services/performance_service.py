@@ -7,6 +7,7 @@ degrade to None. All money summed in Decimal, coerced to float at the boundary.
 """
 from __future__ import annotations
 
+import asyncio
 import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -22,6 +23,22 @@ def _npl(t: dict) -> Decimal:
     """COALESCE(net_pnl, 0) as Decimal."""
     v = t.get("net_pnl")
     return Decimal(str(v)) if v is not None else Decimal(0)
+
+
+def _safe_float(v: Any) -> float | None:
+    """Coerce an exchange/card money field (string|number|None) to float, never raising.
+
+    Bybit and dashboard cards return numeric strings; a disabled/errored card may carry
+    None, "" or even a non-numeric placeholder. Returns None on anything unparseable so a
+    single malformed field can never 500 the live endpoint (fail-soft, spec §5)."""
+    if v is None or v == "":
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    # reject nan/inf so they can never reach the JSON response as invalid tokens
+    return f if math.isfinite(f) else None
 
 
 @dataclass
@@ -89,7 +106,10 @@ def compute_starting_equity(
     contributing: set[str] = set()
     for aid in account_ids:
         val = cycle_equity.get(aid)
-        if val is None:
+        # A non-positive cycle initial_equity (0/negative junk row) is not a usable starting
+        # value -- fall back to the first trade's base_capital rather than dropping the account
+        # from D entirely (which would silently shrink every %/ratio metric).
+        if val is None or val <= 0:
             val = first_trade_capital.get(aid)
         if val is not None and val > 0:
             total += Decimal(str(val))
@@ -309,14 +329,16 @@ def compute_monthly_pnl(trades: list[dict], D: float | None,
 def compute_drawdown_duration(trades: list[dict], D: float | None) -> tuple[int | None, bool]:
     """Duration (floored days) of the single deepest drawdown episode, + recovered flag.
 
-    Walk equity_proxy = D + cum (peak seeded at D). Track the running peak's timestamp;
+    Walk equity_proxy = base + cum (peak seeded at base). The base offset cancels out of
+    every peak-vs-proxy comparison, so it works for both the %-basis (base = D) and the
+    absolute-dollar basis (base = 0 when D is None). Track the running peak's timestamp;
     find the trough with the largest drop from its preceding peak; duration = peak->
-    (recovery that reclaims peak, else last trade), floored. Returns (None, True) when
-    there is no drawdown or D is None.
+    (recovery that reclaims peak, else last trade), floored. Returns (None, True) when there
+    are no trades (callers pass the curve's trade set on the D-None path, never []).
     """
-    if not trades or D is None:
+    if not trades:
         return None, True
-    base = Decimal(str(D))
+    base = Decimal(str(D)) if D is not None else Decimal(0)
     cum = Decimal(0)
     peak = base
     peak_ts = trades[0]["closed_at"]  # pre-first-trade peak time ~ first close
@@ -414,12 +436,17 @@ class PerformanceService:
             cards = await self._accounts.get_dashboard()
             wanted = set(account_ids)
             mine = [c for c in cards if c.get("id") in wanted]
-            if not mine or any(c.get("total_equity") is None for c in mine):
+            # Aggregate only the accounts that actually reported a numeric equity. A single
+            # disabled/errored account (total_equity None) should NOT blank the whole scope's
+            # hero -- sum what is known and flag degraded so the gap is visible (spec §5).
+            reporting = [c for c in mine if c.get("total_equity") is not None]
+            if not reporting:
                 return nulls, True
-            eq = sum(float(c.get("total_equity") or 0) for c in mine)
-            upl = sum(float(c.get("total_perp_upl") or 0) for c in mine)
-            oc = sum(int(c.get("positions_count") or 0) for c in mine)
-            return {"total_equity": eq, "unrealized_pnl": upl, "open_count": oc}, False
+            degraded = len(reporting) < len(account_ids)
+            eq = sum(_safe_float(c.get("total_equity")) or 0 for c in reporting)
+            upl = sum(_safe_float(c.get("total_perp_upl")) or 0 for c in reporting)
+            oc = sum(int(_safe_float(c.get("positions_count")) or 0) for c in reporting)
+            return {"total_equity": eq, "unrealized_pnl": upl, "open_count": oc}, degraded
         except Exception:  # noqa: BLE001 -- any live failure degrades the overlay only
             return nulls, True
 
@@ -457,11 +484,18 @@ class PerformanceService:
         full_curve = compute_cumulative_curve(all_trades)
         curve = [p for p in full_curve
                  if (start is None or _parse_ts(p["t"]) >= start) and _parse_ts(p["t"]) < end]
-        full_dd, _ = compute_drawdown_series(all_d, D)
+        # Drawdown: with D present it's a %-metric over the D-relative subset (aggregate
+        # null-D rule). With D None it degrades to an ABSOLUTE dollar drawdown, which has no
+        # denominator -- so it must span the same trades as the curve (all_trades), not the
+        # empty all_d, otherwise max_drawdown_abs fabricates $0.00 next to a dipping curve.
+        dd_trades = all_d if D is not None else all_trades
+        full_dd, _ = compute_drawdown_series(dd_trades, D)
         dd_series = [p for p in full_dd
                      if (start is None or _parse_ts(p["t"]) >= start) and _parse_ts(p["t"]) < end]
         dd_max = _max_drawdown_over(dd_series, D)
-        dd_days, dd_recovered = compute_drawdown_duration(win_d, D)
+        # duration: %-basis uses the D-relative window subset; abs-basis (D None) uses the
+        # same all-in-scope window trades the curve/abs-drawdown use.
+        dd_days, dd_recovered = compute_drawdown_duration(win_d if D is not None else win_trades, D)
         ratios = compute_risk_ratios(all_d, D, dd_max.get("max_drawdown_pct"),
                                      window=(start, end))
         total_return_pct = (float(sum((_npl(t) for t in win_d), Decimal(0)) / Decimal(str(D)) * 100)
@@ -515,7 +549,9 @@ class PerformanceService:
         for r in rows:
             bc = r.get("base_capital")
             npl = r.get("net_pnl")
-            net_pnl_pct = (float(npl) / float(bc) * 100) if (npl is not None and bc) else None
+            # guard bc > 0 (not just truthy): a non-positive base_capital would yield a
+            # meaningless or sign-flipped percentage.
+            net_pnl_pct = (float(npl) / float(bc) * 100) if (npl is not None and bc and bc > 0) else None
             hold = None
             if r.get("opened_at") and r.get("closed_at"):
                 hold = (r["closed_at"] - r["opened_at"]).total_seconds() / 3600
@@ -562,33 +598,48 @@ class PerformanceService:
         except Exception:  # noqa: BLE001
             degraded = True
 
+        # Fetch every account's open positions CONCURRENTLY (bounded) so the tab's latency
+        # is one Bybit round-trip, not N sequential ones. Each fetch is isolated: one bad
+        # account yields an exception captured per-account (fail-soft), not a tab-wide 500.
+        sem = asyncio.Semaphore(8)
+
+        async def _fetch(aid: str):
+            async with sem:
+                try:
+                    return aid, await self._accounts.get_positions(aid), None
+                except Exception as exc:  # noqa: BLE001 — one bad account must not 500 the tab
+                    return aid, None, str(exc)[:200]
+
+        results = await asyncio.gather(*(_fetch(aid) for aid in account_ids))
+
         positions: list[dict] = []
         tiles: list[dict] = []
-        for aid in account_ids:
+        for aid, raw, err in results:
             card = cards_by_id.get(aid, {})
-            err = None
-            try:
-                raw = await self._accounts.get_positions(aid)
-                for p in raw:
-                    entry = float(p.get("avgPrice") or 0)
-                    upl = float(p.get("unrealisedPnl") or 0)
-                    notional = float(p.get("positionValue") or 0)
-                    upl_pct = (upl / notional * 100) if notional else None
-                    positions.append({
-                        "account_id": aid, "symbol": p.get("symbol"), "side": p.get("side"),
-                        "size": float(p.get("size") or 0), "leverage": float(p.get("leverage") or 0),
-                        "entry": entry, "unrealized_pnl": upl, "unrealized_pnl_pct": upl_pct,
-                    })
-            except Exception as exc:  # noqa: BLE001 — one bad account must not 500 the tab
-                err = str(exc)[:200]
+            if err is not None:
                 degraded = True
+            for p in (raw or []):
+                entry = _safe_float(p.get("avgPrice")) or 0.0
+                size = _safe_float(p.get("size")) or 0.0
+                if size == 0:
+                    continue  # defensive: skip flat/zero-size entries
+                upl = _safe_float(p.get("unrealisedPnl")) or 0.0
+                # Bybit's REST position dict has no positionValue field, so derive notional
+                # from size*entry (the values that DO exist) for the unrealized % basis.
+                notional = abs(size * entry)
+                upl_pct = (upl / notional * 100) if notional else None
+                positions.append({
+                    "account_id": aid, "symbol": p.get("symbol"), "side": p.get("side"),
+                    "size": size, "leverage": _safe_float(p.get("leverage")) or 0.0,
+                    "entry": entry, "unrealized_pnl": upl, "unrealized_pnl_pct": upl_pct,
+                })
             tiles.append({
                 "account_id": aid,
                 "label": card.get("label") or aid,
                 "type": card.get("account_type"),
-                "equity": float(card["total_equity"]) if card.get("total_equity") not in (None, "") else None,
-                "today_pnl": float(card["today_pnl"]) if card.get("today_pnl") not in (None, "") else None,
-                "positions_count": int(card.get("positions_count") or 0),
+                "equity": _safe_float(card.get("total_equity")),
+                "today_pnl": _safe_float(card.get("today_pnl")),
+                "positions_count": int(_safe_float(card.get("positions_count")) or 0),
                 "error": err,
             })
 
@@ -600,7 +651,10 @@ class PerformanceService:
             by_sector: dict[str, dict] = {}
             total_notional = 0.0
             for p in positions:
-                sec = sectors.get(p["symbol"], "Other")
+                # Fallback matches the DB's lowercase 'other' default so an unmapped symbol
+                # and an explicitly-classified 'other' symbol collapse into ONE bucket
+                # (real sector labels keep their stored casing).
+                sec = sectors.get(p["symbol"]) or "other"
                 notional = abs(p["size"] * p["entry"])
                 total_notional += notional
                 s = by_sector.setdefault(sec, {"sector": sec, "exposure": 0.0, "positions": 0})

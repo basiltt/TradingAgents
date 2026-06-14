@@ -46,7 +46,7 @@ export function SignalsTab({ scope }: Props) {
         <h3 className="mb-2 text-[10px] uppercase tracking-wider font-extrabold text-[var(--neu-text-soft)]">Rolling Win Rate</h3>
         <ResponsiveContainer width="100%" height={260}>
           <LineChart data={series}>
-            <CartesianGrid stroke="var(--neu-border)" strokeDasharray="3 3" />
+            <CartesianGrid stroke="var(--neu-stroke-soft)" strokeDasharray="3 3" />
             <XAxis dataKey="x" tick={{ fill: "var(--neu-text-soft)", fontSize: 11 }} />
             <YAxis domain={[0, 100]} tick={{ fill: "var(--neu-text-soft)", fontSize: 11 }} tickFormatter={(v) => `${v}%`} />
             <Tooltip />
