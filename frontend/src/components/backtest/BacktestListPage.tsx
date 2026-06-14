@@ -16,7 +16,7 @@ import { backtestApi } from "@/api/client";
 import { BACKTEST_POLL_INTERVAL_MS } from "@/hooks/useBacktestPolling";
 import { isTerminalStatus, isActiveStatus, type BacktestRun } from "./types";
 import { BacktestStatusBadge } from "./BacktestStatusBadge";
-import { formatUsd, formatPct, formatDateTime, TH_CLASS, TH_CLASS_RIGHT } from "./format";
+import { formatUsd, formatPct, formatDateTime, TH_CLASS, TH_CLASS_RIGHT } from "@/lib/format";
 import { getBasket, removeFromBasket, MAX_COMPARE_RUNS } from "./comparisonBasket";
 
 export interface BacktestListPageProps {

@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { backtestApi } from "@/api/client";
 import type { BacktestRun } from "./types";
-import { formatUsd, formatPct, formatRatio, formatInt, pnlColorClass, TH_CLASS, TH_CLASS_RIGHT } from "./format";
+import { formatUsd, formatPct, formatRatio, formatInt, pnlColorClass, TH_CLASS, TH_CLASS_RIGHT } from "@/lib/format";
 import { EquityOverlayChart } from "./EquityOverlayChart";
 import { OVERLAY_COLORS, type EquityDataset } from "./equityOverlayData";
 import { bestRunIndex } from "./backtestCompare";

@@ -12,7 +12,7 @@ import {
   PNL_POSITIVE_CLASS,
   TH_CLASS,
   TH_CLASS_RIGHT,
-} from "./format";
+} from "@/lib/format";
 
 /** A single headline metric tile. */
 function MetricTile({
