@@ -53,6 +53,7 @@ export const FIELD_PATHS_BY_TAB: Record<TabId, string[]> = {
   filters: [
     "symbol_whitelist", "symbol_blacklist",
     "max_price_drift_pct", "max_same_sector",
+    "require_trend_alignment", "block_falling_knife",
     "adaptive_blacklist_enabled", "adaptive_blacklist_min_trades",
     "adaptive_blacklist_max_win_rate", "adaptive_blacklist_lookback_hours",
     "cooloff_on_success_enabled", "cooloff_on_success_minutes",

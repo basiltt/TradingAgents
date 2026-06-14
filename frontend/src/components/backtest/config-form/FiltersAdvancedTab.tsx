@@ -28,6 +28,37 @@ export function FiltersAdvancedTab({ control, fieldError, setValue }: FiltersAdv
           <NumberField control={control} name="max_same_sector" label="Max positions same asset category" nullable hint="Not simulated · asset-category (sector) data is live-only, no effect on results" error={fieldError("max_same_sector")} />
         </div>
 
+        {/* FIX-005 signal-quality gates — deterministic, fail-open. Both off by default;
+            the "Best Winrate Config" preset turns them on. */}
+        <div className="mt-4 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+          <Controller
+            control={control}
+            name="require_trend_alignment"
+            render={({ field }) => (
+              <label className="flex cursor-pointer items-start gap-2.5 rounded-[var(--neu-radius-md)] border border-[color:var(--neu-stroke-soft)]/40 px-3 py-2.5 text-[0.85rem] text-[var(--neu-text-strong)]">
+                <Checkbox checked={field.value === true} onCheckedChange={(c) => field.onChange(c === true)} />
+                <span>
+                  Require trend alignment
+                  <Hint text="Signal quality · entry must agree with the 1h AND 4h EMA trend" />
+                </span>
+              </label>
+            )}
+          />
+          <Controller
+            control={control}
+            name="block_falling_knife"
+            render={({ field }) => (
+              <label className="flex cursor-pointer items-start gap-2.5 rounded-[var(--neu-radius-md)] border border-[color:var(--neu-stroke-soft)]/40 px-3 py-2.5 text-[0.85rem] text-[var(--neu-text-strong)]">
+                <Checkbox checked={field.value === true} onCheckedChange={(c) => field.onChange(c === true)} />
+                <span>
+                  Block falling-knife shorts
+                  <Hint text="Signal quality · reject shorts mid-crash (already capitulating)" />
+                </span>
+              </label>
+            )}
+          />
+        </div>
+
         {/* Adaptive blacklist — reveal group: checkbox header + dependent fields shown only when on. */}
         <div className="mt-4 rounded-[var(--neu-radius-md)] border border-[color:var(--neu-stroke-soft)]/40 px-3 py-2.5">
           <Controller

@@ -1845,7 +1845,8 @@ class BacktestService:
 
                     cov = await self._kline_cache.ensure_coverage(
                         symbols, interval,
-                        simulation_config.get("_report_start", simulation_config["date_range_start"]),
+                        simulation_config.get("_report_start", simulation_config["date_range_start"])
+                        - self._signal_quality_lookback(simulation_config),
                         simulation_config["date_range_end"],
                         on_progress=_warm_progress,
                         cancel_check=cancel_event.is_set,
@@ -2177,6 +2178,25 @@ class BacktestService:
         symbols = self._required_kline_symbols_for(config, signals)
         return await self._load_klines_for_symbols(config, symbols)
 
+    @staticmethod
+    def _signal_quality_lookback(config: dict[str, Any]) -> timedelta:
+        """Pre-window 5m history the FIX-005 signal-quality gates need so they do NOT
+        silently fail-open at the start of the window. The engine resamples the loaded
+        5m series into 1h/4h to compute the EMA9/EMA21 trend; with no pre-window history
+        the first ~days of decisions have too few resampled candles, the trend can't be
+        computed, and the gate ALLOWS — under-reporting the filter vs live (which reads
+        native 1h/4h candles with full history). Returns 0 unless a gate is active, so
+        every existing (gate-off) backtest loads a byte-identical window to before.
+
+        Sized to 168h (7 days) = 42 native 4h candles: the 4h EMA21 needs 21 to START and
+        ~2×21 to fully CONVERGE, so 42 gives the resampled 4h EMA the same converged value
+        live's depth-60 fetch would — without loading live's full 240h of 5m bars per
+        symbol (which would roughly double peak kline memory on a typical multi-day run).
+        The knife gate needs only 24h, so the trend buffer dominates."""
+        if not (config.get("require_trend_alignment") or config.get("block_falling_knife")):
+            return timedelta(0)
+        return timedelta(hours=168)
+
     async def _load_klines_for_symbols(
         self, config: dict[str, Any], symbols: list[str] | set[str]
     ) -> dict[str, list[dict[str, Any]]]:
@@ -2185,7 +2205,12 @@ class BacktestService:
             return {}
         symbols = sorted({str(symbol) for symbol in symbols if symbol})
         interval = config.get("simulation_interval", "5m")
-        start = config["date_range_start"]
+        # Extend the load back by the signal-quality lookback (0 unless a FIX-005 gate is
+        # active) so the engine has enough pre-window 5m history to resample 1h/4h and
+        # keep the gate active from the first decision — matching live. The simulation
+        # loop anchors on signal_time, not klines[0], so earlier candles only add lookback
+        # and never shift where the sim starts.
+        start = config["date_range_start"] - self._signal_quality_lookback(config)
         end = config["date_range_end"]
         results = await asyncio.gather(
             *(self._kline_cache.get_klines(symbol, interval, start, end) for symbol in symbols)
@@ -2230,7 +2255,13 @@ class BacktestService:
         attempted: set[str] = set()
         required = set(self._required_kline_symbols_for(config, signals))
         interval = config.get("simulation_interval", "5m")
-        warm_start = config.get("_report_start", config["date_range_start"])
+        # Mirror _load_klines_for_symbols: warm the same pre-window buffer the gates need,
+        # so expansion-warmed symbols get the SAME lookback the final load reads (else the
+        # gate fails-open for just the expanded symbols).
+        warm_start = (
+            config.get("_report_start", config["date_range_start"])
+            - self._signal_quality_lookback(config)
+        )
         end = config["date_range_end"]
 
         for pass_idx in range(_KLINE_EXPANSION_PASSES):

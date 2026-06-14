@@ -44,10 +44,11 @@ describe("AutoTradeSection — Apply preset buttons", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders both preset buttons in the expanded card body", () => {
+  it("renders all three preset buttons in the expanded card body", () => {
     renderSection([pristineCard()]);
     expect(screen.getByRole("button", { name: /Apply Reference/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Apply Optimized/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Apply Best Winrate/i })).toBeInTheDocument();
   });
 
   it("applies the Optimized preset to a pristine card without a confirm dialog", () => {
@@ -111,5 +112,22 @@ describe("AutoTradeSection — Apply preset buttons", () => {
     // Confirmed ⇒ Optimized leverage (7) applied, dialog closes.
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(screen.getByText("7x")).toBeInTheDocument();
+  });
+
+  it("Best Winrate confirm dialog is labelled and applies the tight TP geometry", async () => {
+    // Edited card → dialog. Best Winrate keeps leverage 7 but tightens TP to a 0.8%
+    // price move (take_profit_pct 5.6 / leverage 7), shown on the "TP move" chip.
+    const edited: AutoTradeConfig = { ...DEFAULT_CONFIG, account_id: "", leverage: 13 };
+    renderSection([edited]);
+
+    fireEvent.click(screen.getByRole("button", { name: /Apply Best Winrate/i }));
+    const dialog = await screen.findByRole("dialog");
+    // The dialog title uses the Best Winrate label (not the old Optimized/Reference ternary).
+    expect(within(dialog).getByText(/Apply Best Winrate preset\?/i)).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: /Apply preset/i }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // 5.6 / 7 = 0.80% TP price move (toFixed(2)); shown on the chip and the input hint.
+    expect(screen.getAllByText(/0\.80%/).length).toBeGreaterThan(0);
   });
 });

@@ -87,6 +87,9 @@ class BacktestCreateRequest(BaseModel):
     symbol_whitelist: Optional[list[str]] = Field(default=None, max_length=200)
     max_signal_age_minutes: Optional[int] = Field(default=None, ge=1)
     max_price_drift_pct: Optional[float] = Field(default=None, ge=0.1, le=50)
+    # FIX-005 signal-quality gates (backtest mirrors the live auto_trade gates).
+    require_trend_alignment: bool = Field(default=False)
+    block_falling_knife: bool = Field(default=False)
 
     # Close rules
     max_drawdown_pct: float = Field(default=100.0, gt=0, le=100)

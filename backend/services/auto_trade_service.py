@@ -2313,8 +2313,10 @@ class AutoTradeExecutor:
             try:
                 from backend.services import signal_quality_filter as _sqf
                 if want_trend:
-                    kl_1h = await self._sq_klines(symbol, "60", 60)
-                    kl_4h = await self._sq_klines(symbol, "240", 60)
+                    # Native 1h/4h candles (the fetcher maps "1h"/"4h" to its cache).
+                    # 60 candles each is ample for the EMA9/EMA21 trend (needs >=21).
+                    kl_1h = await self._sq_klines(symbol, "1h", 60)
+                    kl_4h = await self._sq_klines(symbol, "4h", 60)
                     aligned = _sqf.trend_aligned(direction, kl_1h, kl_4h)
                     if aligned is False:  # None == fail-open (insufficient data) -> allow
                         self._emit_decision(account_id, phase, symbol, "skipped",
@@ -2322,7 +2324,7 @@ class AutoTradeExecutor:
                         state.trades_skipped += 1
                         return None
                 if want_knife:
-                    kl_5m = await self._sq_klines(symbol, "5", 300)
+                    kl_5m = await self._sq_klines(symbol, "5m", 300)  # ~24h for the 24h-crash check
                     if _sqf.is_falling_knife_short(direction, kl_5m):
                         self._emit_decision(account_id, phase, symbol, "skipped",
                                             "falling_knife", result)

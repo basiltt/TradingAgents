@@ -62,6 +62,9 @@ const DEFAULT_CONFIG: Omit<AutoTradeConfig, "account_id"> = {
   max_same_direction: null,
   max_same_sector: null,
   max_price_drift_pct: null,
+  // FIX-005 signal-quality gates — default off
+  require_trend_alignment: false,
+  block_falling_knife: false,
   ai_pause_cycles: null,
   // Cool Off Time — all default-off
   cooloff_on_success_enabled: false,
@@ -349,6 +352,15 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, usedAccountId
     setPendingPreset(null);
   };
 
+  // Human label for each preset id — single source so the confirm dialog title and
+  // body can't drift as presets are added.
+  const PRESET_LABELS: Record<ReferencePresetId, string> = {
+    reference: "Reference",
+    optimized: "Optimized",
+    best_winrate: "Best Winrate",
+  };
+  const pendingPresetLabel = pendingPreset ? PRESET_LABELS[pendingPreset] : "";
+
   return (
     <article className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-lg)] border-none shadow-[var(--shadow-card)] p-5">
       <div
@@ -419,6 +431,9 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, usedAccountId
             </Button>
             <Button type="button" variant="outline" size="xs" onClick={() => applyPreset("optimized")} className="uppercase tracking-[0.14em]">
               Apply Optimized
+            </Button>
+            <Button type="button" variant="outline" size="xs" onClick={() => applyPreset("best_winrate")} className="uppercase tracking-[0.14em]">
+              Apply Best Winrate
             </Button>
           </div>
         </div>
@@ -663,6 +678,23 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, usedAccountId
               />
               <p className="mt-2 text-[11px] text-[var(--neu-text-muted)]">Skip a signal if price already moved this % since the scan. Blank = disabled.</p>
             </div>
+          </div>
+
+          {/* FIX-005 signal-quality gates — deterministic, fail-open. The "Apply Best
+              Winrate" preset turns both on. */}
+          <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+            <ToggleRow
+              checked={config.require_trend_alignment ?? false}
+              onChange={(checked) => onChange({ require_trend_alignment: checked })}
+              title="Require trend alignment"
+              description="Entry direction must agree with the 1h AND 4h EMA trend. Fail-open if data is missing."
+            />
+            <ToggleRow
+              checked={config.block_falling_knife ?? false}
+              onChange={(checked) => onChange({ block_falling_knife: checked })}
+              title="Block falling-knife shorts"
+              description="Reject shorts opened mid-crash (already capitulating). Fail-open if data is missing."
+            />
           </div>
 
           <p className="mt-4 text-[11px] leading-5 text-[var(--neu-text-muted)]">
@@ -964,11 +996,11 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, usedAccountId
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>
-              Apply {pendingPreset === "optimized" ? "Optimized" : "Reference"} preset?
+              Apply {pendingPresetLabel} preset?
             </DialogTitle>
             <DialogDescription>
               This replaces this account's trade, risk &amp; strategy settings with the{" "}
-              {pendingPreset === "optimized" ? "Optimized" : "Reference"} preset.
+              {pendingPresetLabel} preset.
             </DialogDescription>
           </DialogHeader>
           <p className="text-sm text-[var(--neu-text-muted)]">

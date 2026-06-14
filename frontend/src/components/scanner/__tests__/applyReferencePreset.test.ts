@@ -10,6 +10,7 @@ import {
 import {
   DAD_DEMO_REFERENCE_CONFIG,
   OPTIMIZED_REFERENCE_CONFIG,
+  BEST_WINRATE_CONFIG,
 } from "@/components/backtest/referencePresets";
 import { DEFAULT_CONFIG } from "../AutoTradeSection";
 import type { AutoTradeConfig } from "@/api/client";
@@ -57,9 +58,11 @@ describe("applyReferencePreset — mapper", () => {
   it("excludes every protected (account/AI/response-only) key from the mapped output", () => {
     const ref = presetToAutoTradeConfig("reference") as Record<string, unknown>;
     const opt = presetToAutoTradeConfig("optimized") as Record<string, unknown>;
+    const bw = presetToAutoTradeConfig("best_winrate") as Record<string, unknown>;
     for (const k of PROTECTED_KEYS) {
       expect(ref).not.toHaveProperty(k);
       expect(opt).not.toHaveProperty(k);
+      expect(bw).not.toHaveProperty(k);
     }
   });
 
@@ -78,9 +81,30 @@ describe("applyReferencePreset — mapper", () => {
     expect(opt.target_goal_value).toBe(12);
   });
 
+  it("best_winrate differs from optimized EXACTLY on the geometry + 2 signal gates", () => {
+    const opt = presetToAutoTradeConfig("optimized") as Record<string, unknown>;
+    const bw = presetToAutoTradeConfig("best_winrate") as Record<string, unknown>;
+    const changed = Object.keys({ ...opt, ...bw }).filter(
+      (k) => !Object.is(opt[k], bw[k]),
+    );
+    expect(new Set(changed)).toEqual(
+      new Set([
+        "take_profit_pct",
+        "stop_loss_pct",
+        "require_trend_alignment",
+        "block_falling_knife",
+      ]),
+    );
+    expect(bw.take_profit_pct).toBe(5.6);
+    expect(bw.stop_loss_pct).toBe(12.6);
+    expect(bw.require_trend_alignment).toBe(true);
+    expect(bw.block_falling_knife).toBe(true);
+  });
+
   it("getReferencePreset returns the underlying literal for each id", () => {
     expect(getReferencePreset("reference")).toBe(DAD_DEMO_REFERENCE_CONFIG);
     expect(getReferencePreset("optimized")).toBe(OPTIMIZED_REFERENCE_CONFIG);
+    expect(getReferencePreset("best_winrate")).toBe(BEST_WINRATE_CONFIG);
   });
 });
 
@@ -98,13 +122,15 @@ describe("applyReferencePreset — guards & drift safety", () => {
   it("covers every preset key: each is either mappable or explicitly backtest-only", () => {
     // A future preset key nobody mapped fails HERE instead of silently dropping.
     const mappable = new Set<string>(MAPPABLE_KEYS as readonly string[]);
-    for (const k of Object.keys(DAD_DEMO_REFERENCE_CONFIG)) {
-      expect(mappable.has(k) || BACKTEST_ONLY.has(k)).toBe(true);
+    for (const preset of [DAD_DEMO_REFERENCE_CONFIG, OPTIMIZED_REFERENCE_CONFIG, BEST_WINRATE_CONFIG]) {
+      for (const k of Object.keys(preset)) {
+        expect(mappable.has(k) || BACKTEST_ONLY.has(k)).toBe(true);
+      }
     }
   });
 
-  it("maps exactly 65 keys", () => {
-    expect(MAPPABLE_KEYS.length).toBe(65);
+  it("maps exactly 67 keys", () => {
+    expect(MAPPABLE_KEYS.length).toBe(67);
   });
 });
 
@@ -130,5 +156,33 @@ describe("applyReferencePreset — card-state helpers", () => {
   it("presetChangesCard is false when the card already equals the preset", () => {
     const applied = makeCard(presetToAutoTradeConfig("optimized"));
     expect(presetChangesCard(applied, "optimized")).toBe(false);
+  });
+
+  it("best_winrate round-trips: applying then re-checking reports no further change", () => {
+    const applied = makeCard(presetToAutoTradeConfig("best_winrate"));
+    expect(presetChangesCard(applied, "best_winrate")).toBe(false);
+    expect(applied.require_trend_alignment).toBe(true);
+    expect(applied.block_falling_knife).toBe(true);
+  });
+
+  it("applying Reference/Optimized after Best Winrate RESETS the signal gates to off", () => {
+    // Regression: the gates must not 'stick ON'. Reference/Optimized explicitly carry
+    // require_trend_alignment:false / block_falling_knife:false, so applying them after
+    // Best Winrate overwrites the gates back off (presetTo* only writes DEFINED keys —
+    // omitting them in the base presets would silently leave a Reference card gated).
+    const afterBestWinrate = makeCard(presetToAutoTradeConfig("best_winrate"));
+    expect(afterBestWinrate.require_trend_alignment).toBe(true);
+
+    const ref = presetToAutoTradeConfig("reference") as Record<string, unknown>;
+    const opt = presetToAutoTradeConfig("optimized") as Record<string, unknown>;
+    expect(ref.require_trend_alignment).toBe(false);
+    expect(ref.block_falling_knife).toBe(false);
+    expect(opt.require_trend_alignment).toBe(false);
+    expect(opt.block_falling_knife).toBe(false);
+
+    // Simulate the card onChange merge: Best Winrate card + Reference partial.
+    const merged = { ...afterBestWinrate, ...ref };
+    expect(merged.require_trend_alignment).toBe(false);
+    expect(merged.block_falling_knife).toBe(false);
   });
 });

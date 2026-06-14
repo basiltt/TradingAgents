@@ -73,6 +73,9 @@ export interface BacktestCreateRequest {
   symbol_whitelist?: string[] | null;
   max_signal_age_minutes?: number | null;
   max_price_drift_pct?: number | null;
+  // FIX-005 signal-quality gates
+  require_trend_alignment?: boolean;
+  block_falling_knife?: boolean;
 
   // Close rules
   max_drawdown_pct?: number;

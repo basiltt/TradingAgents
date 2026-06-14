@@ -353,6 +353,9 @@ export interface AutoTradeConfig {
   trailing_profit_pct?: number | null;
   max_same_direction?: number | null;
   max_price_drift_pct?: number | null;
+  // FIX-005 signal-quality gates (deterministic, fail-open)
+  require_trend_alignment?: boolean;
+  block_falling_knife?: boolean;
   max_same_sector?: number | null;
   adaptive_blacklist_enabled?: boolean;
   adaptive_blacklist_min_trades?: number;

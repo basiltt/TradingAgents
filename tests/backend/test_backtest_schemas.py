@@ -114,6 +114,26 @@ class TestBacktestCreateRequest:
         assert req.session_blocked_hours_utc == [1, 6, 7, 8]
         assert req.mr_long_enabled is True
 
+    def test_signal_quality_gates_default_off_and_round_trip(self):
+        """FIX-005 signal-quality gates: opt-in (default off), and accepted when set so
+        the Best-Winrate preset can be validated on historical data before live."""
+        from backend.schemas.backtest_schemas import BacktestCreateRequest, ScanSource
+        kw = dict(
+            starting_capital=10000.0,
+            date_range_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            date_range_end=datetime(2026, 1, 31, tzinfo=timezone.utc),
+            scan_source=ScanSource(mode="date_range"),
+        )
+        default = BacktestCreateRequest(**kw)
+        assert default.require_trend_alignment is False
+        assert default.block_falling_knife is False
+
+        on = BacktestCreateRequest(
+            require_trend_alignment=True, block_falling_knife=True, **kw
+        )
+        assert on.require_trend_alignment is True
+        assert on.block_falling_knife is True
+
     def test_regime_validators_mirror_production(self):
         """The 3 cross-field regime validators (session-exclusive, vol-band, mr-direction)
         apply in the backtest schema exactly as in AutoTradeConfig."""

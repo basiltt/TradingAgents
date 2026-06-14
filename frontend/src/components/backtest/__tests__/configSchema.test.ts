@@ -3,10 +3,12 @@ import {
   backtestConfigSchema,
   DAD_DEMO_REFERENCE_CONFIG,
   OPTIMIZED_REFERENCE_CONFIG,
+  BEST_WINRATE_CONFIG,
   scanSourceSchema,
   buildDefaults,
   buildDadDemoReferenceDefaults,
   buildOptimizedReferenceDefaults,
+  buildBestWinrateDefaults,
   toCreateRequest,
 } from "../configSchema";
 
@@ -281,6 +283,31 @@ describe("buildDefaults", () => {
     });
     expect("account_id" in OPTIMIZED_REFERENCE_CONFIG).toBe(false);
     expect(backtestConfigSchema.safeParse(defaults).success).toBe(true);
+  });
+
+  it("applies the best-winrate config: optimized base + tight geometry + signal gates", () => {
+    const defaults = buildBestWinrateDefaults();
+
+    // Best Winrate inherits the Optimized base, then tightens TP/SL to the
+    // win-rate-maximizing band (0.8% / 1.8% price move at leverage 7) and turns on
+    // both FIX-005 signal-quality gates.
+    expect(defaults.leverage).toBe(7);
+    expect(defaults.take_profit_pct).toBe(5.6);
+    expect(defaults.stop_loss_pct).toBe(12.6);
+    expect(defaults.require_trend_alignment).toBe(true);
+    expect(defaults.block_falling_knife).toBe(true);
+    // Inherited-from-Optimized fields are unchanged.
+    expect(defaults.max_trades).toBe(4);
+    expect(defaults.max_drawdown_pct).toBe(100);
+    expect(defaults.target_goal_value).toBe(12);
+    expect("account_id" in BEST_WINRATE_CONFIG).toBe(false);
+    expect(backtestConfigSchema.safeParse(defaults).success).toBe(true);
+  });
+
+  it("signal-quality gates default OFF in the base schema (opt-in only)", () => {
+    const formDefaults = buildDefaults();
+    expect(formDefaults.require_trend_alignment).toBe(false);
+    expect(formDefaults.block_falling_knife).toBe(false);
   });
 
   it("its non-seed fallbacks equal the schema's own defaults (no silent drift)", () => {

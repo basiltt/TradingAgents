@@ -1791,3 +1791,104 @@ class TestPortfolioEquityOneMinuteWalk:
         c = BacktestEngine().run(self._cfg(), sigs, klines, fine_klines={})
         assert a.trades == b.trades == c.trades
         assert a.metrics.get("net_profit") == b.metrics.get("net_profit") == c.metrics.get("net_profit")
+
+
+class TestSignalQualityGates:
+    """FIX-005: backtest mirrors the live trend-alignment + falling-knife gates."""
+
+    def _kl(self, base, closes):
+        from datetime import timedelta
+        return [{"open_time": base + timedelta(minutes=i * 5), "open": c,
+                 "high": c * 1.001, "low": c * 0.999, "close": c, "volume": 100.0}
+                for i, c in enumerate(closes)]
+
+    def _state(self):
+        from backend.services.backtest_engine import SimulationState
+        return SimulationState(sizing_capital=1000.0)
+
+    def test_counter_trend_short_filtered(self):
+        from datetime import datetime, timezone, timedelta
+        from backend.services.backtest_engine import BacktestEngine
+        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        rising = self._kl(base, [float(i) for i in range(1, 1101)])  # uptrend (enough for 4h EMA)
+        # decision after the series; a SHORT here is counter-trend
+        ct = base + timedelta(minutes=5 * 1101)
+        sig = {"id": 1, "ticker": "FOOUSDT", "direction": "sell", "confidence": "high",
+               "score": -8, "signal_time": base, "scan_id": "s1", "analysis_price": 1099.0}
+        eng = BacktestEngine()
+        st = self._state()
+        cfg = {"require_trend_alignment": True, "min_score": 0}
+        passed = eng._apply_filter_chain(cfg, sig, st, ct, {"FOOUSDT": rising})
+        assert passed is False  # counter-trend short blocked
+
+    def test_trend_aligned_short_passes_gate(self):
+        from datetime import datetime, timezone, timedelta
+        from backend.services.backtest_engine import BacktestEngine
+        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        falling = self._kl(base, [float(i) for i in range(1100, 0, -1)])  # downtrend
+        ct = base + timedelta(minutes=5 * 1101)
+        sig = {"id": 1, "ticker": "FOOUSDT", "direction": "sell", "confidence": "high",
+               "score": -8, "signal_time": base, "scan_id": "s1", "analysis_price": 2.0}
+        eng = BacktestEngine()
+        cfg = {"require_trend_alignment": True, "min_score": 0}
+        assert eng._apply_filter_chain(cfg, sig, self._state(), ct, {"FOOUSDT": falling}) is True
+
+    def test_gates_off_by_default(self):
+        from datetime import datetime, timezone, timedelta
+        from backend.services.backtest_engine import BacktestEngine
+        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        rising = self._kl(base, [float(i) for i in range(1, 1101)])
+        ct = base + timedelta(minutes=5 * 1101)
+        sig = {"id": 1, "ticker": "FOOUSDT", "direction": "sell", "confidence": "high",
+               "score": -8, "signal_time": base, "scan_id": "s1", "analysis_price": 1099.0}
+        eng = BacktestEngine()
+        # no require_trend_alignment -> counter-trend short is NOT blocked by this gate
+        assert eng._apply_filter_chain({"min_score": 0}, sig, self._state(), ct, {"FOOUSDT": rising}) is True
+
+    def test_gate_fails_open_on_malformed_klines(self):
+        """Live wraps the gate in try/except -> ALLOW on any error. The backtest must do
+        the same: a kline missing OHLC keys must NOT raise out of _apply_filter_chain and
+        abort the whole run — it must fail-open (allow) like live."""
+        from datetime import datetime, timezone, timedelta
+        from backend.services.backtest_engine import BacktestEngine
+        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        # Candles with open_time but NO high/low/close — would KeyError under direct subscript.
+        broken = [{"open_time": base + timedelta(minutes=i * 5)} for i in range(1101)]
+        ct = base + timedelta(minutes=5 * 1101)
+        sig = {"id": 1, "ticker": "FOOUSDT", "direction": "sell", "confidence": "high",
+               "score": -8, "signal_time": base, "scan_id": "s1", "analysis_price": 1.0}
+        eng = BacktestEngine()
+        cfg = {"require_trend_alignment": True, "block_falling_knife": True, "min_score": 0}
+        # Must not raise; must allow (fail-open).
+        assert eng._apply_filter_chain(cfg, sig, self._state(), ct, {"FOOUSDT": broken}) is True
+
+    def test_resample_tolerates_short_keys_and_clock_aligns(self):
+        """_resample_klines must (a) read {h,l,c} short keys via the tolerant accessors,
+        and (b) bucket on real UTC clock boundaries, not fixed chunks from index 0."""
+        from datetime import datetime, timezone, timedelta
+        from backend.services.backtest_engine import BacktestEngine
+        # Start at 00:35 so the first 1h bucket (00:00-01:00) is PARTIAL — a fixed-chunk
+        # resampler from index 0 would mis-group these; a clock-aligned one splits at 01:00.
+        base = datetime(2026, 1, 1, 0, 35, tzinfo=timezone.utc)
+        kl = [{"open_time": base + timedelta(minutes=i * 5),
+               "h": 10.0 + i, "l": 9.0 + i, "c": 9.5 + i} for i in range(12)]  # 00:35..01:30
+        out = BacktestEngine._resample_klines(kl, 3600)  # 1h buckets
+        # 00:35-00:55 (5 bars) -> bucket A; 01:00-01:30 (7 bars) -> bucket B = 2 buckets.
+        assert len(out) == 2
+        # Bucket A close = last bar before 01:00 (the 00:55 bar, i=4 -> c=13.5).
+        assert out[0]["close"] == 13.5
+        assert out[0]["high"] == 14.0  # max h over i=0..4 = 10+4
+        # Bucket B includes the trailing partial (NOT dropped): last bar i=11 -> c=20.5.
+        assert out[1]["close"] == 20.5
+
+    def test_resample_handles_epoch_open_time(self):
+        """open_time may be an int/float epoch (one engine path) or a datetime (the other);
+        both must bucket correctly."""
+        from backend.services.backtest_engine import BacktestEngine
+        t0 = 1_767_225_600  # 2026-01-01 00:00:00 UTC
+        kl = [{"open_time": t0 + i * 300, "high": 10.0 + i, "low": 9.0 + i, "close": 9.5 + i}
+              for i in range(24)]  # 24×5m = 2h spanning two clean 1h buckets
+        out = BacktestEngine._resample_klines(kl, 3600)
+        assert len(out) == 2
+        assert out[0]["close"] == 9.5 + 11  # last bar of first hour (i=11)
+        assert out[1]["close"] == 9.5 + 23  # last bar of second hour (i=23)

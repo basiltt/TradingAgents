@@ -81,3 +81,64 @@ async def test_load_klines_each_symbol_fetched_once():
     await svc._load_klines(cfg, _signals("BTCUSDT", "ETHUSDT", "BTCUSDT"))
     # 2 unique symbols → exactly 2 fetches (dedup by the sorted-set), no dups.
     assert sorted(cache.calls) == ["BTCUSDT", "ETHUSDT"]
+
+
+class WindowRecordingCache:
+    """Records the (start, end) window each get_klines is called with."""
+
+    def __init__(self):
+        self.windows = []
+
+    async def get_klines(self, symbol, interval, start, end):
+        self.windows.append((start, end))
+        return []
+
+
+@pytest.mark.asyncio
+async def test_load_klines_no_buffer_when_gates_off():
+    """Gate-off backtests must load the EXACT requested window (byte-identical to before
+    the FIX-005 buffer was added) — no silent window widening."""
+    cache = WindowRecordingCache()
+    svc = BacktestService(db=None, kline_cache=cache)
+    end = BASE + timedelta(days=1)
+    cfg = {"simulation_interval": "5m", "date_range_start": BASE, "date_range_end": end}
+    await svc._load_klines(cfg, _signals("BTCUSDT"))
+    assert cache.windows == [(BASE, end)]
+
+
+@pytest.mark.asyncio
+async def test_load_klines_buffers_pre_window_when_trend_gate_on():
+    """With require_trend_alignment, the load must extend 168h BEFORE date_range_start so
+    the engine has enough pre-window 5m history to resample 1h/4h and keep the gate active
+    from the first decision (else the gate silently fails-open early)."""
+    cache = WindowRecordingCache()
+    svc = BacktestService(db=None, kline_cache=cache)
+    end = BASE + timedelta(days=1)
+    cfg = {"simulation_interval": "5m", "date_range_start": BASE, "date_range_end": end,
+           "require_trend_alignment": True}
+    await svc._load_klines(cfg, _signals("BTCUSDT"))
+    assert cache.windows == [(BASE - timedelta(hours=168), end)]
+
+
+@pytest.mark.asyncio
+async def test_load_klines_buffers_when_only_knife_gate_on():
+    """The knife gate alone also triggers the buffer (it needs ~24h of pre-window 5m)."""
+    cache = WindowRecordingCache()
+    svc = BacktestService(db=None, kline_cache=cache)
+    end = BASE + timedelta(days=1)
+    cfg = {"simulation_interval": "5m", "date_range_start": BASE, "date_range_end": end,
+           "block_falling_knife": True}
+    await svc._load_klines(cfg, _signals("BTCUSDT"))
+    start, _ = cache.windows[0]
+    assert start < BASE  # buffered back
+
+
+def test_signal_quality_lookback_zero_unless_gate_active():
+    """The lookback is 0 (no widening) unless a gate is on — pins the gate-off invariant."""
+    assert BacktestService._signal_quality_lookback({}) == timedelta(0)
+    assert BacktestService._signal_quality_lookback(
+        {"require_trend_alignment": False, "block_falling_knife": False}) == timedelta(0)
+    assert BacktestService._signal_quality_lookback(
+        {"require_trend_alignment": True}) == timedelta(hours=168)
+    assert BacktestService._signal_quality_lookback(
+        {"block_falling_knife": True}) == timedelta(hours=168)

@@ -48,6 +48,13 @@ export const DAD_DEMO_REFERENCE_CONFIG = {
   symbol_whitelist: null,
   max_signal_age_minutes: 150,
   max_price_drift_pct: 6,
+  // FIX-005 signal-quality gates — explicit OFF here (not omitted) so applying the
+  // Reference/Optimized preset RESETS them on a card, mirroring every other boolean.
+  // BEST_WINRATE_CONFIG overrides both to true. Omitting them would let the gates
+  // "stick ON" after a user applies Best Winrate then switches back (presetTo* only
+  // writes defined keys), silently leaving a Reference card running the gates.
+  require_trend_alignment: false,
+  block_falling_knife: false,
   max_drawdown_pct: 12,
   smart_drawdown_close: true,
   breakeven_timeout_hours: null,
@@ -111,4 +118,28 @@ export const OPTIMIZED_REFERENCE_CONFIG = {
   max_trades: 4,
   max_drawdown_pct: 100,
   target_goal_value: 12,
+} satisfies Partial<BacktestCreateRequest>;
+
+/** Best-Winrate preset — the highest win-rate point from the FIX-005 signal-quality
+ * research (docs/account-forensics/fixes/work/FIX-005/). It layers the two
+ * deterministic, fail-open signal-quality gates on top of the Optimized baseline AND
+ * tightens the TP/SL geometry to the win-rate-maximizing band:
+ *   • require_trend_alignment — entry direction must agree with the 1h AND 4h EMA trend
+ *   • block_falling_knife     — reject shorts mid-crash (already capitulating)
+ *   • TP/SL geometry: 0.8% price-move TP, 1.8% price-move SL. In production margin-%
+ *     units that is move_pct × leverage, so at leverage 7 → take_profit_pct 5.6,
+ *     stop_loss_pct 12.6 (tight, high-hit-rate target; wide stop avoids noise stops).
+ *
+ * Validated across 500+ trades sampled over different days/sessions: ~80% directional
+ * win rate, reproducible on re-run. TRADE-OFF to be aware of: this maximizes WIN RATE,
+ * not profit-per-trade. The tight target books many small wins (~+0.20%/trade); the
+ * wider Optimized geometry wins less often (~58%) but earns more per trade
+ * (~+0.73%/trade). Pick this preset when win-rate/consistency is the goal; pick
+ * Optimized when total net profit is the goal. */
+export const BEST_WINRATE_CONFIG = {
+  ...OPTIMIZED_REFERENCE_CONFIG,
+  take_profit_pct: 5.6,
+  stop_loss_pct: 12.6,
+  require_trend_alignment: true,
+  block_falling_knife: true,
 } satisfies Partial<BacktestCreateRequest>;

@@ -11,6 +11,7 @@ import {
   buildDefaults,
   buildDadDemoReferenceDefaults,
   buildOptimizedReferenceDefaults,
+  buildBestWinrateDefaults,
   toCreateRequest,
   ADAPTIVE_BLACKLIST_DEFAULTS,
   type BacktestConfigFormValues,
@@ -256,6 +257,12 @@ export function BacktestConfigForm({
     saveDraft(referenceValues);
   }, [reset]);
 
+  const applyBestWinrate = React.useCallback(() => {
+    const referenceValues = normalizeDisabledGroups(buildBestWinrateDefaults());
+    reset(referenceValues);
+    saveDraft(referenceValues);
+  }, [reset]);
+
   const storeReferenceConfig = React.useCallback(() => {
     saveReferenceConfig(getValues() as BacktestDraft);
   }, [getValues]);
@@ -400,6 +407,9 @@ export function BacktestConfigForm({
         </Button>
         <Button type="button" variant="secondary" onClick={applyOptimizedReference} disabled={isSubmitting}>
           Optimized Reference
+        </Button>
+        <Button type="button" variant="secondary" onClick={applyBestWinrate} disabled={isSubmitting}>
+          Best Winrate Config
         </Button>
         <Button type="submit" disabled={isSubmitting}>
           {isSubmitting ? "Running…" : "Run Backtest"}

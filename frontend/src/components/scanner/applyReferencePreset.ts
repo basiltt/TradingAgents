@@ -2,6 +2,7 @@ import { type AutoTradeConfig } from "@/api/client";
 import {
   DAD_DEMO_REFERENCE_CONFIG,
   OPTIMIZED_REFERENCE_CONFIG,
+  BEST_WINRATE_CONFIG,
 } from "@/components/backtest/referencePresets";
 
 /**
@@ -35,7 +36,7 @@ type ProtectedKey = (typeof PROTECTED_KEYS)[number];
 type MappableKey = Exclude<keyof AutoTradeConfig, ProtectedKey>;
 
 /**
- * The 65 trade/risk/strategy keys shared by the presets and `AutoTradeConfig`. The
+ * The 67 trade/risk/strategy keys shared by the presets and `AutoTradeConfig`. The
  * `satisfies readonly MappableKey[]` clause rejects a typo OR a protected/response-only
  * key at compile time. (Backtest-only preset keys like `starting_capital`,
  * `scan_source`, `simulation_interval`, fees/slippage/funding are NOT keys of
@@ -61,6 +62,9 @@ export const MAPPABLE_KEYS = [
   "symbol_whitelist",
   "max_signal_age_minutes",
   "max_price_drift_pct",
+  // FIX-005 signal-quality gates
+  "require_trend_alignment",
+  "block_falling_knife",
   "max_drawdown_pct",
   "smart_drawdown_close",
   "breakeven_timeout_hours",
@@ -115,7 +119,7 @@ export const MAPPABLE_KEYS = [
   "regime_trend_ema_dist_pct",
 ] as const satisfies readonly MappableKey[];
 
-export type ReferencePresetId = "reference" | "optimized";
+export type ReferencePresetId = "reference" | "optimized" | "best_winrate";
 
 /**
  * Single accessor seam for the preset values. Today it returns the hardcoded literal;
@@ -123,11 +127,24 @@ export type ReferencePresetId = "reference" | "optimized";
  * latest optimized config) without touching any call site.
  */
 export function getReferencePreset(id: ReferencePresetId): Record<string, unknown> {
-  return id === "optimized" ? OPTIMIZED_REFERENCE_CONFIG : DAD_DEMO_REFERENCE_CONFIG;
+  switch (id) {
+    case "reference":
+      return DAD_DEMO_REFERENCE_CONFIG;
+    case "optimized":
+      return OPTIMIZED_REFERENCE_CONFIG;
+    case "best_winrate":
+      return BEST_WINRATE_CONFIG;
+    default: {
+      // Exhaustiveness guard: a new ReferencePresetId that forgets to add a case
+      // fails to compile HERE instead of silently returning the Reference preset.
+      const _exhaustive: never = id;
+      return _exhaustive;
+    }
+  }
 }
 
 /**
- * Build the partial `AutoTradeConfig` to merge into the card. Copies ONLY the 65
+ * Build the partial `AutoTradeConfig` to merge into the card. Copies ONLY the 67
  * mappable keys (skips backtest-only + protected fields by construction), omitting any
  * key the preset leaves undefined.
  */

@@ -18,12 +18,14 @@ import {
   ADAPTIVE_BLACKLIST_DEFAULTS,
   DAD_DEMO_REFERENCE_CONFIG,
   OPTIMIZED_REFERENCE_CONFIG,
+  BEST_WINRATE_CONFIG,
 } from "./referencePresets";
 // …and re-export so existing importers keep resolving them from "../configSchema".
 export {
   ADAPTIVE_BLACKLIST_DEFAULTS,
   DAD_DEMO_REFERENCE_CONFIG,
   OPTIMIZED_REFERENCE_CONFIG,
+  BEST_WINRATE_CONFIG,
 } from "./referencePresets";
 
 const isoDate = z.string().min(1, "Required");
@@ -90,6 +92,9 @@ export const backtestConfigSchema = z
     symbol_whitelist: z.array(z.string()).max(200).nullable().default(null),
     max_signal_age_minutes: z.coerce.number().int().min(1).nullable().default(null),
     max_price_drift_pct: z.coerce.number().min(0.1).max(50).nullable().default(null),
+    // FIX-005 signal-quality gates (deterministic, fail-open)
+    require_trend_alignment: z.boolean().default(false),
+    block_falling_knife: z.boolean().default(false),
 
     // Close rules
     max_drawdown_pct: z.coerce.number().positive().max(100).default(100),
@@ -294,6 +299,8 @@ export function buildDefaults(
     symbol_whitelist: seed?.symbol_whitelist ?? null,
     max_signal_age_minutes: seed?.max_signal_age_minutes ?? null,
     max_price_drift_pct: seed?.max_price_drift_pct ?? null,
+    require_trend_alignment: seed?.require_trend_alignment ?? false,
+    block_falling_knife: seed?.block_falling_knife ?? false,
     max_drawdown_pct: seed?.max_drawdown_pct ?? 100,
     smart_drawdown_close: seed?.smart_drawdown_close ?? false,
     breakeven_timeout_hours: seed?.breakeven_timeout_hours ?? null,
@@ -361,6 +368,14 @@ export function buildDadDemoReferenceDefaults(
  * reference config, leaving the user's stored Reference Config untouched. */
 export function buildOptimizedReferenceDefaults(): Required<BacktestConfigFormValues> {
   return buildDefaults(OPTIMIZED_REFERENCE_CONFIG);
+}
+
+/** Apply the Best-Winrate research preset (FIX-005 signal-quality gates + tight TP/SL
+ * geometry) as a separate account-free reference config, leaving the user's stored
+ * Reference Config untouched. Maximizes directional win rate (see preset comment for
+ * the win-rate vs profit-per-trade trade-off). */
+export function buildBestWinrateDefaults(): Required<BacktestConfigFormValues> {
+  return buildDefaults(BEST_WINRATE_CONFIG);
 }
 
 /** Convert a parsed form value into the API request body (ISO-normalizes dates). */

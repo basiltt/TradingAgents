@@ -546,7 +546,7 @@ class ScannerService:
                 from datetime import timedelta
                 # Size the window from interval*depth (IR10) so non-default intervals
                 # (4h/1d) still fetch enough candles, with generous margin.
-                _mins = {"15m": 15, "1h": 60, "4h": 240}.get(interval, 60)
+                _mins = {"5m": 5, "15m": 15, "1h": 60, "4h": 240}.get(interval, 60)
                 span_min = max(_mins * (depth + 5), _mins * 35)
                 end = datetime.now(timezone.utc)
                 start = end - timedelta(minutes=span_min)

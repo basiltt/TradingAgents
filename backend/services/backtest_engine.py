@@ -1306,7 +1306,77 @@ class BacktestEngine:
                         state.signals_filtered += 1
                         return False
 
-        return True  # All 17 filters passed
+        # 18. FIX-005 signal-quality gates (counter-trend + falling-knife). Mirrors live
+        # auto_trade_service._try_trade, using the SAME production filter functions
+        # (signal_quality_filter) for a single source of truth. SKIPPED for MR (fade side
+        # decoupled from the signal axis) and in relaxed/fill mode, exactly like live.
+        # Wrapped in try/except → ALLOW, mirroring live's fail-open: a quality check must
+        # never abort the run (or block a trade) because of a data/compute problem.
+        want_trend = bool(config.get("require_trend_alignment"))
+        want_knife = bool(config.get("block_falling_knife"))
+        if (want_trend or want_knife) and not is_mr and not relaxed:
+            try:
+                from backend.services import signal_quality_filter as _sqf
+                series = klines.get(ticker, [])
+                # 5m candles strictly before the decision time (no lookahead).
+                hist5 = [k for k in series if k.get("open_time") and k["open_time"] < current_time]
+                if hist5:
+                    if want_trend:
+                        kl_1h = self._resample_klines(hist5, 3600)   # native 1h candles
+                        kl_4h = self._resample_klines(hist5, 14400)  # native 4h candles
+                        if _sqf.trend_aligned(direction, kl_1h, kl_4h) is False:
+                            state.signals_filtered += 1
+                            return False
+                    if want_knife and _sqf.is_falling_knife_short(direction, hist5):
+                        state.signals_filtered += 1
+                        return False
+            except Exception:  # noqa: BLE001 — fail-open, mirroring live _try_trade
+                pass
+
+        return True  # All filters passed
+
+    @staticmethod
+    def _resample_klines(klines: list[dict[str, Any]], bucket_seconds: int) -> list[dict[str, Any]]:
+        """Aggregate ascending 5m candles into higher-TF candles bucketed on UTC CLOCK
+        boundaries (epoch // bucket_seconds), matching the exchange's native 1h/4h candles
+        the live path reads — NOT fixed-size chunks anchored to the oldest cached bar,
+        which would phase-shift the EMA and drop the most-recent (most decision-relevant)
+        partial bucket. The final, still-forming bucket IS included (live's latest closed
+        candle is the highest-weight EMA term). Uses the tolerant _h/_l/_c accessors so a
+        kline using {h,l,c}, {high,low,close}, or an object all work. open_time may be a
+        datetime or an int/float epoch (the two engine code paths produce different types)."""
+        from backend.services import signal_quality_filter as _sqf
+
+        def _epoch(ot: Any) -> Optional[int]:
+            if isinstance(ot, datetime):
+                return int(ot.timestamp())
+            if isinstance(ot, (int, float)):
+                return int(ot)
+            return None
+
+        buckets: dict[int, list[Any]] = {}
+        order: list[int] = []
+        for k in klines:
+            ot = k.get("open_time") if isinstance(k, dict) else getattr(k, "open_time", None)
+            e = _epoch(ot)
+            if e is None:
+                continue
+            b = e // bucket_seconds
+            if b not in buckets:
+                buckets[b] = []
+                order.append(b)
+            buckets[b].append(k)
+
+        out: list[dict[str, Any]] = []
+        for b in order:  # 5m series is ascending, so first-seen order == chronological
+            chunk = buckets[b]
+            highs = [hi for hi in (_sqf._h(c) for c in chunk) if hi is not None]
+            lows = [lo for lo in (_sqf._l(c) for c in chunk) if lo is not None]
+            close = _sqf._c(chunk[-1])
+            if not highs or not lows or close is None:
+                continue
+            out.append({"high": max(highs), "low": min(lows), "close": close})
+        return out
 
     def _fine_window(
         self, symbol: str, bar_open_time: datetime
