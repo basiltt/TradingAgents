@@ -423,6 +423,111 @@ class TradeStatsResponse(BaseModel):
     by_strategy: Optional[List[StrategyDirectionStats]] = None
 
 
+# ── Performance analytics (trades-derived, spec 2026-06-14) ──────────────────
+# These models document the typed contract and mirror the frontend TS types. The
+# router returns the raw service dict WITHOUT response_model (extra="forbid" would
+# reject an additive field at runtime); they are the contract-of-record + reviewer
+# reference. To validate later, do PerformanceOverviewResponse(**result) in the route.
+
+
+class PerformanceKpis(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    total_equity: Optional[float] = None
+    unrealized_pnl: Optional[float] = None
+    open_count: Optional[int] = None
+    net_pnl: float
+    realized_pnl_gross: float
+    total_return_pct: Optional[float] = None
+    win_rate: Optional[float] = None
+    win_count: int
+    loss_count: int
+    profit_factor: Optional[float] = None
+    expectancy: Optional[float] = None
+    avg_win: Optional[float] = None
+    avg_loss: Optional[float] = None
+    avg_win_loss_ratio: Optional[float] = None
+    best_trade: Optional[float] = None
+    worst_trade: Optional[float] = None
+    max_consecutive_wins: int
+    max_consecutive_losses: int
+    avg_hold_time_hours: Optional[float] = None
+    total_trades: int
+    max_drawdown_pct: Optional[float] = None
+    max_drawdown_abs: Optional[float] = None
+    drawdown_duration_days: Optional[int] = None
+    drawdown_recovered: Optional[bool] = None
+    sharpe_ratio: Optional[float] = None
+    sortino_ratio: Optional[float] = None
+    calmar_ratio: Optional[float] = None
+
+
+class PerformanceKpisPrev(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    total_equity: Optional[float] = None
+    net_pnl: Optional[float] = None
+    win_rate: Optional[float] = None
+    sharpe_ratio: Optional[float] = None
+    max_drawdown_pct: Optional[float] = None
+    total_trades: int = 0
+
+
+class CurvePoint(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    t: str
+    cum_pnl: float
+    peak: float
+
+
+class DrawdownPoint(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    t: str
+    drawdown_pct: Optional[float] = None
+    drawdown_abs: Optional[float] = None
+
+
+class DailyPnlPoint(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    date: str
+    pnl: float
+
+
+class MonthlyPnlPoint(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    month: str
+    pnl: float
+    return_pct: Optional[float] = None
+
+
+class EquityNow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    t: str
+    equity: float
+
+
+class PerformanceMeta(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    currency: str
+    grouping_tz: str
+    trading_days: int
+    starting_equity: Optional[float] = None
+    return_basis: str
+    live_equity_available: bool
+    live_sourced: List[str]
+    degraded: bool
+
+
+class PerformanceOverviewResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kpis: PerformanceKpis
+    kpis_prev: Optional[PerformanceKpisPrev] = None
+    equity_curve: List[CurvePoint]
+    equity_now: Optional[EquityNow] = None
+    drawdown_series: List[DrawdownPoint]
+    daily_pnl: List[DailyPnlPoint]
+    monthly_pnl: List[MonthlyPnlPoint]
+    meta: PerformanceMeta
+
+
 class TradeCloseRequest(BaseModel):
     qty: Optional[float] = None
     close_reason: Optional[str] = Field(default="manual_single", max_length=128)
