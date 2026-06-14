@@ -119,3 +119,41 @@ def is_falling_knife_short(direction: str, kl_5m: list[Any],
     swing_low = min(lows) if lows else cur
     dist_to_low = (cur - swing_low) / cur * 100 if cur else 99.0
     return (rsi < rsi_oversold) or (dist_to_low < support_dist_pct)
+
+
+# ── TP/SL geometry (FIX-005 research) ────────────────────────────────────────
+# Backtest finding: production used very wide exits (take_profit_pct=150, stop_loss_pct=100
+# with leverage 7 => ~21% TP / ~14% SL PRICE moves), so correct-direction signals ran far
+# past their edge and got chopped out. On FILTERED signals (score>=6 + trend-aligned +
+# no-falling-knife), a tight, asymmetric geometry of ~0.8% TP / ~1.8% SL PRICE move won
+# 77-82% on both held-out samples with positive expectancy after fees.
+#
+# Production stores TP/SL as PERCENT OF MARGIN; the price move it implies is
+# (pct / leverage) (see accounts_service: tp_price_pct = take_profit_pct / leverage).
+# So to target a price move of `p%` you set the margin pct = p * leverage.
+TARGET_TP_PRICE_MOVE_PCT = 0.8   # researched first-target price move
+TARGET_SL_PRICE_MOVE_PCT = 1.8   # researched stop price move
+
+def tp_pct_for_price_move(price_move_pct: float, leverage: int) -> float:
+    """Production take_profit_pct (% of margin) that yields the given PRICE move at this
+    leverage. Inverse of accounts_service's tp_price_pct = take_profit_pct / leverage."""
+    return round(price_move_pct * float(leverage), 2)
+
+def sl_pct_for_price_move(price_move_pct: float, leverage: int) -> float:
+    """Production stop_loss_pct (% of margin) for the given PRICE move at this leverage."""
+    return round(price_move_pct * float(leverage), 2)
+
+def recommended_exit_pcts(leverage: int,
+                          tp_price_move_pct: float = TARGET_TP_PRICE_MOVE_PCT,
+                          sl_price_move_pct: float = TARGET_SL_PRICE_MOVE_PCT) -> dict:
+    """Recommended (take_profit_pct, stop_loss_pct) for the researched tight geometry,
+    expressed in production's percent-of-margin units, for a given leverage.
+
+    Example (leverage=7): {'take_profit_pct': 5.6, 'stop_loss_pct': 12.6} — i.e. a 0.8%
+    price move to TP and a 1.8% move to SL, the geometry that won 77-82% in backtest."""
+    return {
+        "take_profit_pct": tp_pct_for_price_move(tp_price_move_pct, leverage),
+        "stop_loss_pct": sl_pct_for_price_move(sl_price_move_pct, leverage),
+        "tp_price_move_pct": tp_price_move_pct,
+        "sl_price_move_pct": sl_price_move_pct,
+    }

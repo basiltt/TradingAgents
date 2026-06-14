@@ -73,3 +73,24 @@ def test_falling_knife_only_applies_to_shorts():
 
 def test_falling_knife_failopen_on_short_history():
     assert is_falling_knife_short("sell", _kl([100.0, 99.0, 98.0])) is False
+
+
+# ── TP/SL geometry helpers (FIX-005 research) ──────────────────────────────────
+from backend.services.signal_quality_filter import (
+    tp_pct_for_price_move, sl_pct_for_price_move, recommended_exit_pcts,
+)
+
+def test_tp_pct_for_price_move_is_leverage_scaled():
+    # 0.8% price move at 7x leverage = 5.6% of margin (matches accounts_service inverse)
+    assert tp_pct_for_price_move(0.8, 7) == 5.6
+    assert sl_pct_for_price_move(1.8, 7) == 12.6
+
+def test_recommended_exit_pcts_roundtrips_to_price_move():
+    rec = recommended_exit_pcts(10)
+    # take_profit_pct / leverage must equal the target price move (the prod formula)
+    assert rec["take_profit_pct"] / 10 == rec["tp_price_move_pct"]
+    assert rec["stop_loss_pct"] / 10 == rec["sl_price_move_pct"]
+
+def test_recommended_exit_pcts_defaults():
+    rec = recommended_exit_pcts(7)
+    assert rec["take_profit_pct"] == 5.6 and rec["stop_loss_pct"] == 12.6

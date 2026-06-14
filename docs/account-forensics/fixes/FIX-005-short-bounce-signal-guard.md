@@ -62,8 +62,21 @@ Shipped as a **trade-selection filter** (not a generation change):
   (per-scan kline cache; fail-open on any error so a data glitch never blocks trading).
 - Opt-in `AutoTradeConfig` knobs (default **off**, non-breaking): `require_trend_alignment`,
   `block_falling_knife`.
-- Tests: `tests/backend/test_signal_quality_filter.py` (12) + 5 gate integration tests in
-  `test_auto_trade_service_unit.py`. 44 pass.
+- Tests: `tests/backend/test_signal_quality_filter.py` (15) + 5 gate integration tests in
+  `test_auto_trade_service_unit.py`. 47 pass.
+
+## Pushing win-rate >75% — the TP/SL geometry lever
+A follow-up search found the *filter-stacking* ceiling was ~72% (worst seed). The further
+lift came from **trade geometry**, not selection. The filtered signals had the right
+direction but production exits were very wide (`take_profit_pct=150`/`stop_loss_pct=100` at
+leverage 7 ≈ 21% TP / 14% SL **price** move), so correct trades ran past their edge and got
+chopped out. Re-simulating the same filtered signals with a **tight, asymmetric geometry**
+(TP ≈ 0.8% / SL ≈ 1.8% price move) won **77.1% / 81.6% on both held-out seeds** (96 & 87
+trades), **net-profitable after fees** (+13% / +19% total). Helper:
+`signal_quality_filter.recommended_exit_pcts(leverage)` → production `take_profit_pct` /
+`stop_loss_pct` (e.g. lev 7 → TP 5.6% / SL 12.6%). Applied per-account via scan config (no
+behavior-code change); roll out carefully (paper/subset first). Full numbers + per-leverage
+table in `work/FIX-005/RESEARCH.md`.
 
 > Note: the original "fix approach" proposed editing the LLM prompt; the research showed that
 > over-abstains and doesn't generalize, so we filter deterministically instead. The prompt-side
