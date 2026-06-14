@@ -358,3 +358,174 @@ def compute_drawdown_duration(trades: list[dict], D: float | None) -> tuple[int 
         return int((recovery_ts - worst_peak_ts).total_seconds() // 86400), True
     last_ts = trades[-1]["closed_at"]
     return int((last_ts - worst_peak_ts).total_seconds() // 86400), False
+
+
+def _parse_ts(ts: str) -> datetime:
+    """Parse an ISO timestamp string (with Z or offset) to an aware datetime."""
+    return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+
+
+def _max_drawdown_over(dd_series: list[dict], D: float | None) -> dict:
+    """Recompute the max drawdown over a (sliced) drawdown series.
+
+    Used so window/prev-window metrics reflect only the in-window slice. Honors the
+    pct-vs-abs distinction: with D present, takes the min drawdown_pct; without D, the
+    min drawdown_abs.
+    """
+    if not dd_series:
+        return {"max_drawdown_pct": (0.0 if D is not None else None),
+                "max_drawdown_abs": (None if D is not None else 0.0)}
+    if D is not None:
+        worst = min((p.get("drawdown_pct", 0.0) for p in dd_series), default=0.0)
+        return {"max_drawdown_pct": float(worst), "max_drawdown_abs": None}
+    worst = min((p.get("drawdown_abs", 0.0) for p in dd_series), default=0.0)
+    return {"max_drawdown_pct": None, "max_drawdown_abs": float(worst)}
+
+
+class PerformanceService:
+    """Computes performance analytics from trades; live overlay is best-effort."""
+
+    def __init__(self, db, accounts_service=None):
+        self._db = db
+        self._accounts = accounts_service
+
+    async def _resolve_scope(self, scope: str) -> tuple[list[str], str | None, str | None]:
+        """scope token -> (account_ids, account_type, account_id)."""
+        if scope == "all":
+            return await self._db.get_scope_account_ids(), None, None
+        if scope in ("live", "demo"):
+            return await self._db.get_scope_account_ids(account_type=scope), scope, None
+        # else: a single account id
+        ids = await self._db.get_scope_account_ids(account_id=scope)
+        return ids, None, scope
+
+    async def _live_overlay(self, account_ids: list[str]) -> tuple[dict, bool]:
+        """Best-effort live totals via accounts_service.get_dashboard. Degrades to None.
+
+        NOTE: dashboard cards key the account PK as ``id`` (from ``**acc``), unrealized P&L
+        as ``total_perp_upl``, and these money fields are STRINGS (e.g. "123.45") or None on
+        a disabled/errored card -- so coerce with float(x or 0). Verified against
+        accounts_service._fetch_card.
+        """
+        nulls = {"total_equity": None, "unrealized_pnl": None, "open_count": None}
+        if self._accounts is None or not account_ids:
+            return nulls, True
+        try:
+            cards = await self._accounts.get_dashboard()
+            wanted = set(account_ids)
+            mine = [c for c in cards if c.get("id") in wanted]
+            if not mine or any(c.get("total_equity") is None for c in mine):
+                return nulls, True
+            eq = sum(float(c.get("total_equity") or 0) for c in mine)
+            upl = sum(float(c.get("total_perp_upl") or 0) for c in mine)
+            oc = sum(int(c.get("positions_count") or 0) for c in mine)
+            return {"total_equity": eq, "unrealized_pnl": upl, "open_count": oc}, False
+        except Exception:  # noqa: BLE001 -- any live failure degrades the overlay only
+            return nulls, True
+
+    async def _fetch_scoped(self, account_ids, account_id, account_type, *, start, end):
+        """Fetch the canonical trade set honoring the empty-scope sentinel.
+
+        A single-account scope that resolved to no eligible account (account_id set but
+        account_ids == []) returns [] -- it must NOT fall through to all-accounts. For
+        all/live/demo, account_ids is the resolved list (or empty list = no accounts).
+        """
+        if account_id is not None and not account_ids:
+            return []  # explicit empty scope
+        if account_id is None and account_type is None and not account_ids:
+            return []  # 'all' resolved to zero eligible accounts
+        return await self._db.get_performance_trades(
+            account_ids=account_ids or None, account_type=account_type, start=start, end=end,
+        )
+
+    async def compute_overview(self, *, scope: str, timeframe: str, anchor: datetime) -> dict:
+        account_ids, account_type, account_id = await self._resolve_scope(scope)
+        if account_id is not None and not account_ids:
+            account_ids = []  # explicit empty -- see _fetch_scoped below
+        start, end = resolve_timeframe_window(timeframe, anchor)
+        cycle_eq = await self._db.get_account_first_cycle_equity(account_ids) if account_ids else {}
+        first_cap = await self._db.get_account_first_trade_capital(account_ids) if account_ids else {}
+        D, d_accounts = compute_starting_equity(account_ids=account_ids, cycle_equity=cycle_eq,
+                                                first_trade_capital=first_cap)
+        all_trades = await self._fetch_scoped(account_ids, account_id, account_type, start=None, end=None)
+        win_trades = [t for t in all_trades
+                      if (start is None or t["closed_at"] >= start) and t["closed_at"] < end]
+        all_d = [t for t in all_trades if t["account_id"] in d_accounts]
+        win_d = [t for t in win_trades if t["account_id"] in d_accounts]
+        pnl = compute_pnl_kpis(win_trades)
+        mc_w, mc_l = compute_max_consecutive(win_trades)
+        full_curve = compute_cumulative_curve(all_trades)
+        curve = [p for p in full_curve
+                 if (start is None or _parse_ts(p["t"]) >= start) and _parse_ts(p["t"]) < end]
+        full_dd, _ = compute_drawdown_series(all_d, D)
+        dd_series = [p for p in full_dd
+                     if (start is None or _parse_ts(p["t"]) >= start) and _parse_ts(p["t"]) < end]
+        dd_max = _max_drawdown_over(dd_series, D)
+        dd_days, dd_recovered = compute_drawdown_duration(win_d, D)
+        ratios = compute_risk_ratios(all_d, D, dd_max.get("max_drawdown_pct"),
+                                     window=(start, end))
+        total_return_pct = (float(sum((_npl(t) for t in win_d), Decimal(0)) / Decimal(str(D)) * 100)
+                            if (D and D > 0) else None)
+        hold = [(t["closed_at"] - t["opened_at"]).total_seconds() / 3600
+                for t in win_trades if t.get("opened_at")]
+        overlay, degraded = await self._live_overlay(account_ids)
+        kpis = {
+            **pnl,
+            "total_return_pct": total_return_pct,
+            "max_consecutive_wins": mc_w, "max_consecutive_losses": mc_l,
+            "avg_hold_time_hours": (sum(hold) / len(hold)) if hold else None,
+            **dd_max, "drawdown_duration_days": dd_days, "drawdown_recovered": dd_recovered,
+            **ratios, **overlay,
+        }
+        return {
+            "kpis": kpis,
+            "kpis_prev": await self._compute_prev(scope, timeframe, anchor, account_ids,
+                                                  account_id, account_type, D, d_accounts),
+            "equity_curve": curve,
+            "equity_now": ({"t": anchor.isoformat(), "equity": overlay["total_equity"]}
+                           if overlay["total_equity"] is not None else None),
+            "drawdown_series": dd_series,
+            "daily_pnl": compute_daily_pnl(win_trades),
+            "monthly_pnl": compute_monthly_pnl(win_trades, D, pct_trades=win_d),
+            "meta": {
+                "currency": "USDT", "grouping_tz": "UTC",
+                "trading_days": _trading_day_count(win_trades),
+                "starting_equity": D, "return_basis": "recorded_history",
+                "live_equity_available": overlay["total_equity"] is not None,
+                "live_sourced": ["total_equity", "unrealized_pnl", "open_count"],
+                "degraded": degraded,
+            },
+        }
+
+    async def _compute_prev(self, scope, timeframe, anchor, account_ids, account_id,
+                            account_type, D, d_accounts) -> dict | None:
+        """Prior equal-length window KPIs for hero delta chips. None for ALL.
+
+        ``d_accounts`` is the set of accounts that contributed to D -- %/ratio metrics use
+        only their trades (same aggregate null-D rule as compute_overview).
+        """
+        if timeframe == "ALL":
+            return None
+        start, _ = resolve_timeframe_window(timeframe, anchor)
+        if start is None:
+            return None
+        prev_len = anchor - start
+        prev_start, prev_end = start - prev_len, start  # equal-length window before start
+        all_prev = await self._fetch_scoped(account_ids, account_id, account_type, start=None, end=prev_end)
+        all_prev = [t for t in all_prev if t["closed_at"] < prev_end]
+        prev_win = [t for t in all_prev if t["closed_at"] >= prev_start]
+        all_prev_d = [t for t in all_prev if t["account_id"] in d_accounts]
+        pnl = compute_pnl_kpis(prev_win)  # dollar/win KPIs over all in-scope
+        cum_to_prev_end = float(sum((_npl(t) for t in all_prev_d), Decimal(0)))
+        full_dd, _ = compute_drawdown_series(all_prev_d, D)
+        prev_dd = [p for p in full_dd if p["t"] and prev_start <= _parse_ts(p["t"]) < prev_end]
+        dd_max = _max_drawdown_over(prev_dd, D)
+        ratios = compute_risk_ratios(all_prev_d, D, dd_max.get("max_drawdown_pct"),
+                                     window=(prev_start, prev_end))
+        return {
+            "total_equity": (D + cum_to_prev_end) if D is not None else None,
+            "net_pnl": pnl["net_pnl"], "win_rate": pnl["win_rate"],
+            "sharpe_ratio": ratios["sharpe_ratio"],
+            "max_drawdown_pct": dd_max.get("max_drawdown_pct"),
+            "total_trades": pnl["total_trades"],
+        }

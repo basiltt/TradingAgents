@@ -256,3 +256,93 @@ class TestDrawdownDuration:
         days, recovered = compute_drawdown_duration(trades, D=100.0)
         assert recovered is False
         assert days == 3  # 5/1 peak -> 5/4 last trade
+
+
+class TestComputeOverview:
+    @pytest.mark.asyncio
+    async def test_overview_from_trades_no_live_call(self):
+        from unittest.mock import AsyncMock, MagicMock
+        from backend.services.performance_service import PerformanceService
+
+        anchor = datetime(2026, 6, 14, 12, tzinfo=timezone.utc)
+        trades = [_t(10.0, datetime(2026, 5, 1, 8, tzinfo=timezone.utc), _id=1, account_id="a1"),
+                  _t(-4.0, datetime(2026, 5, 2, 8, tzinfo=timezone.utc), _id=2, account_id="a1"),
+                  _t(6.0, datetime(2026, 5, 3, 8, tzinfo=timezone.utc), _id=3, account_id="a1")]
+        db = MagicMock()
+        db.get_scope_account_ids = AsyncMock(return_value=["a1"])
+        db.get_performance_trades = AsyncMock(return_value=trades)
+        db.get_account_first_cycle_equity = AsyncMock(return_value={"a1": 100.0})
+        db.get_account_first_trade_capital = AsyncMock(return_value={})
+        accounts = MagicMock()
+        accounts.get_dashboard = AsyncMock(side_effect=RuntimeError("bybit down"))
+
+        svc = PerformanceService(db=db, accounts_service=accounts)
+        result = await svc.compute_overview(scope="all", timeframe="ALL", anchor=anchor)
+
+        assert result["kpis"]["net_pnl"] == pytest.approx(12.0)
+        assert result["kpis"]["total_trades"] == 3
+        assert result["kpis"]["total_equity"] is None
+        assert result["meta"]["degraded"] is True
+        assert result["meta"]["starting_equity"] == pytest.approx(100.0)
+        assert len(result["equity_curve"]) == 3
+        assert result["meta"]["currency"] == "USDT"
+
+    @pytest.mark.asyncio
+    async def test_window_slices_not_rebases(self):
+        from unittest.mock import AsyncMock, MagicMock
+        from backend.services.performance_service import PerformanceService
+
+        anchor = datetime(2026, 6, 14, 12, tzinfo=timezone.utc)
+        all_trades = [
+            _t(14.0, datetime(2026, 4, 1, 8, tzinfo=timezone.utc), _id=1, account_id="a1"),
+            _t(10.0, datetime(2026, 5, 20, 8, tzinfo=timezone.utc), _id=2, account_id="a1"),
+            _t(2.0, datetime(2026, 6, 1, 8, tzinfo=timezone.utc), _id=3, account_id="a1"),
+        ]
+        db = MagicMock()
+        db.get_scope_account_ids = AsyncMock(return_value=["a1"])
+        db.get_performance_trades = AsyncMock(return_value=all_trades)
+        db.get_account_first_cycle_equity = AsyncMock(return_value={"a1": 100.0})
+        db.get_account_first_trade_capital = AsyncMock(return_value={})
+        accounts = MagicMock()
+        accounts.get_dashboard = AsyncMock(side_effect=RuntimeError("down"))
+        svc = PerformanceService(db=db, accounts_service=accounts)
+        result = await svc.compute_overview(scope="all", timeframe="1M", anchor=anchor)
+        assert result["kpis"]["net_pnl"] == pytest.approx(12.0)
+        assert result["equity_curve"][0]["cum_pnl"] == pytest.approx(24.0)
+        assert result["equity_curve"][-1]["cum_pnl"] == pytest.approx(26.0)
+
+    @pytest.mark.asyncio
+    async def test_single_account_empty_scope_does_not_leak_all(self):
+        from unittest.mock import AsyncMock, MagicMock
+        from backend.services.performance_service import PerformanceService
+
+        anchor = datetime(2026, 6, 14, 12, tzinfo=timezone.utc)
+        db = MagicMock()
+        db.get_scope_account_ids = AsyncMock(return_value=[])
+        db.get_performance_trades = AsyncMock(return_value=[
+            _t(99.0, datetime(2026, 5, 1, tzinfo=timezone.utc), _id=1, account_id="other")])
+        db.get_account_first_cycle_equity = AsyncMock(return_value={})
+        db.get_account_first_trade_capital = AsyncMock(return_value={})
+        svc = PerformanceService(db=db, accounts_service=None)
+        result = await svc.compute_overview(scope="acc_bad", timeframe="ALL", anchor=anchor)
+        assert result["kpis"]["total_trades"] == 0
+        assert result["kpis"]["net_pnl"] == pytest.approx(0.0)
+
+    @pytest.mark.asyncio
+    async def test_aggregate_null_D_account_does_not_inflate_return(self):
+        from unittest.mock import AsyncMock, MagicMock
+        from backend.services.performance_service import PerformanceService
+
+        anchor = datetime(2026, 6, 14, 12, tzinfo=timezone.utc)
+        trades = [_t(10.0, datetime(2026, 5, 1, tzinfo=timezone.utc), _id=1, account_id="a1"),
+                  _t(90.0, datetime(2026, 5, 2, tzinfo=timezone.utc), _id=2, account_id="a2")]
+        db = MagicMock()
+        db.get_scope_account_ids = AsyncMock(return_value=["a1", "a2"])
+        db.get_performance_trades = AsyncMock(return_value=trades)
+        db.get_account_first_cycle_equity = AsyncMock(return_value={"a1": 100.0})
+        db.get_account_first_trade_capital = AsyncMock(return_value={})
+        svc = PerformanceService(db=db, accounts_service=None)
+        result = await svc.compute_overview(scope="all", timeframe="ALL", anchor=anchor)
+        assert result["kpis"]["net_pnl"] == pytest.approx(100.0)
+        assert result["kpis"]["total_return_pct"] == pytest.approx(10.0)
+        assert result["meta"]["starting_equity"] == pytest.approx(100.0)
