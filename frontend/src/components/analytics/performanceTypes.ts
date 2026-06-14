@@ -1,0 +1,69 @@
+export type PerformanceScope = "all" | "live" | "demo" | string; // string = account id
+export type PerformanceTimeframe = "1D" | "1W" | "1M" | "3M" | "YTD" | "1Y" | "ALL";
+
+export interface PerformanceKpis {
+  total_equity: number | null;
+  unrealized_pnl: number | null;
+  open_count: number | null;
+  net_pnl: number;
+  realized_pnl_gross: number;
+  total_return_pct: number | null;
+  win_rate: number | null;
+  win_count: number;
+  loss_count: number;
+  profit_factor: number | null;
+  expectancy: number | null;
+  avg_win: number | null;
+  avg_loss: number | null;
+  avg_win_loss_ratio: number | null;
+  best_trade: number | null;
+  worst_trade: number | null;
+  max_consecutive_wins: number;
+  max_consecutive_losses: number;
+  avg_hold_time_hours: number | null;
+  total_trades: number;
+  max_drawdown_pct: number | null;
+  max_drawdown_abs: number | null;
+  drawdown_duration_days: number | null;
+  drawdown_recovered: boolean | null;
+  sharpe_ratio: number | null;
+  sortino_ratio: number | null;
+  calmar_ratio: number | null;
+}
+
+export interface PerformanceKpisPrev {
+  total_equity: number | null;
+  net_pnl: number | null;
+  win_rate: number | null;
+  sharpe_ratio: number | null;
+  max_drawdown_pct: number | null;
+  total_trades: number;
+}
+
+export interface CurvePoint { t: string; cum_pnl: number; peak: number; }
+export interface DrawdownPoint { t: string; drawdown_pct?: number | null; drawdown_abs?: number | null; }
+export interface DailyPnlPoint { date: string; pnl: number; }
+export interface MonthlyPnlPoint { month: string; pnl: number; return_pct: number | null; }
+export interface EquityNow { t: string; equity: number; }
+
+export interface PerformanceMeta {
+  currency: string;
+  grouping_tz: string;
+  trading_days: number;
+  starting_equity: number | null;
+  return_basis: string;
+  live_equity_available: boolean;
+  live_sourced: string[];
+  degraded: boolean;
+}
+
+export interface PerformanceOverview {
+  kpis: PerformanceKpis;
+  kpis_prev: PerformanceKpisPrev | null;
+  equity_curve: CurvePoint[];
+  equity_now: EquityNow | null;
+  drawdown_series: DrawdownPoint[];
+  daily_pnl: DailyPnlPoint[];
+  monthly_pnl: MonthlyPnlPoint[];
+  meta: PerformanceMeta;
+}

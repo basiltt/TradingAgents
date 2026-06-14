@@ -12,6 +12,7 @@ import type {
   TradeStatsResponse,
   TradeEventsResponse,
 } from "@/components/trades/types";
+import type { PerformanceOverview } from "@/components/analytics/performanceTypes";
 import type {
   BacktestRun,
   BacktestCreateRequest,
@@ -950,6 +951,16 @@ export interface PlaceTradeResponse {
   qty: string;
   usdt_amount: string;
 }
+
+/** Performance analytics API — trades-derived KPIs, equity curve, breakdowns, live. */
+export const performanceApi = {
+  getOverview: (scope: string, timeframe: string, signal?: AbortSignal) =>
+    request<PerformanceOverview>(
+      buildQuery("/api/v1/performance/overview", { scope, timeframe }),
+      undefined,
+      signal,
+    ),
+};
 
 /** Accounts API — CRUD, portfolio, analytics, snapshots, and trade management endpoints. */
 export const accountsApi = {
