@@ -1507,8 +1507,24 @@ class AIManagerTask:
                     triggered = True
                     trigger_reason = f"equity_drop_{drop_pct:.1f}pct"
         elif not reference_equity:
-            self._ws_buffer["_emergency_ref_equity"] = equity_val
-            asyncio.ensure_future(self._persist_ref_equity(equity_val))
+            # FIX-004: floor the (re)seed by still-open unrealized losses. After an
+            # emergency close clears the reference, it would otherwise re-seed at the
+            # LOWERED post-close equity — so a position still open and bleeding gets a
+            # fresh, lower baseline and its ongoing drawdown never re-triggers the
+            # equity-drop emergency (the Unni ESPORTS desensitization: $84→$79 read as
+            # ~6% from a reset ~$84 ref instead of ~19% from the true high-water). Seed
+            # to equity + |open unrealized losses| so an open loser keeps counting
+            # against the high-water mark it is actually drawing down from. This restores
+            # RELATIVE drawdown protection in the 3-8% band; FIX-003's hard cap remains
+            # the absolute backstop above it.
+            open_loss = 0.0
+            for pos in positions:
+                u = _extract_upnl(pos)
+                if u < 0:
+                    open_loss += -u
+            seed = equity_val + open_loss
+            self._ws_buffer["_emergency_ref_equity"] = seed
+            asyncio.ensure_future(self._persist_ref_equity(seed))
 
         # Condition 2: Per-position PnL velocity exceeds emergency threshold
         # Only close the SPECIFIC positions with extreme velocity, not all losers
