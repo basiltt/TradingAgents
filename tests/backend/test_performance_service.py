@@ -346,3 +346,37 @@ class TestComputeOverview:
         assert result["kpis"]["net_pnl"] == pytest.approx(100.0)
         assert result["kpis"]["total_return_pct"] == pytest.approx(10.0)
         assert result["meta"]["starting_equity"] == pytest.approx(100.0)
+
+
+class TestComputeBreakdowns:
+    def test_by_symbol_strategy_close_reason(self):
+        from backend.services.performance_service import compute_breakdowns
+        trades = [
+            _t(5.0, datetime(2026, 5, 1, 10, tzinfo=timezone.utc), symbol="BTCUSDT",
+               strategy_kind="trend", close_reason="take_profit",
+               opened_at=datetime(2026, 5, 1, 8, tzinfo=timezone.utc), _id=1),
+            _t(-2.0, datetime(2026, 5, 2, 10, tzinfo=timezone.utc), symbol="BTCUSDT",
+               strategy_kind="trend", close_reason="stop_loss",
+               opened_at=datetime(2026, 5, 2, 8, tzinfo=timezone.utc), _id=2),
+            _t(3.0, datetime(2026, 5, 3, 10, tzinfo=timezone.utc), symbol="ETHUSDT",
+               strategy_kind="mean_reversion", close_reason="take_profit",
+               opened_at=datetime(2026, 5, 3, 6, tzinfo=timezone.utc), _id=3),
+        ]
+        b = compute_breakdowns(trades)
+        by_sym = {r["symbol"]: r for r in b["by_symbol"]}
+        assert by_sym["BTCUSDT"]["trades"] == 2
+        assert by_sym["BTCUSDT"]["pnl"] == pytest.approx(3.0)
+        assert by_sym["BTCUSDT"]["win_rate"] == pytest.approx(50.0)
+        by_strat = {r["strategy"]: r for r in b["by_strategy"]}
+        assert by_strat["trend"]["trades"] == 2
+        by_reason = {r["reason"]: r for r in b["by_close_reason"]}
+        assert by_reason["take_profit"]["count"] == 2
+        assert "trailing" not in by_reason  # no invented bucket
+        # distribution + hold-time present
+        assert isinstance(b["pnl_distribution"], list)
+        assert isinstance(b["hold_time_buckets"], list)
+
+    def test_legacy_strategy_flag_key_present(self):
+        from backend.services.performance_service import compute_breakdowns
+        b = compute_breakdowns([])
+        assert "strategy_legacy_approximate" in b["meta"]

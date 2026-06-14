@@ -529,3 +529,103 @@ class PerformanceService:
             "max_drawdown_pct": dd_max.get("max_drawdown_pct"),
             "total_trades": pnl["total_trades"],
         }
+
+
+# ── Trades-breakdown (Phase 3) ───────────────────────────────────────────────
+
+
+def _win_rate(trades: list[dict]) -> float | None:
+    n = len(trades)
+    if not n:
+        return None
+    wins = sum(1 for t in trades if t.get("net_pnl") is not None and t["net_pnl"] > 0)
+    return round(wins / n * 100, 4)
+
+
+def _group_sum(trades: list[dict]) -> tuple[int, float, float | None]:
+    """(count, sum net_pnl, win_rate) for a group."""
+    total = float(sum((_npl(t) for t in trades), Decimal(0)))
+    return len(trades), total, _win_rate(trades)
+
+
+def compute_breakdowns(trades: list[dict]) -> dict:
+    """Per-symbol / per-strategy / close-reason / P&L-distribution / hold-time breakdowns.
+
+    Bounded GROUP BY aggregates (no pagination). Win definition net_pnl > 0.
+    `meta.strategy_legacy_approximate` is True when any 'trend' trade is present, because
+    migration 44 force-defaulted every pre-existing row's strategy_kind to 'trend' (so a
+    'trend' label may be a backfill, not a real classification) -- the split is approximate.
+    """
+    # by symbol
+    by_symbol_map: dict[str, list[dict]] = {}
+    by_strategy_map: dict[str, list[dict]] = {}
+    by_reason_map: dict[str, list[dict]] = {}
+    for t in trades:
+        by_symbol_map.setdefault(t["symbol"], []).append(t)
+        by_strategy_map.setdefault(t.get("strategy_kind") or "trend", []).append(t)
+        by_reason_map.setdefault(t.get("close_reason") or "unknown", []).append(t)
+
+    def _rows(m, key):
+        out = []
+        for name, grp in m.items():
+            cnt, pnl, wr = _group_sum(grp)
+            out.append({key: name, "trades": cnt, "count": cnt, "pnl": pnl, "win_rate": wr})
+        return sorted(out, key=lambda r: r["pnl"], reverse=True)
+
+    by_symbol = _rows(by_symbol_map, "symbol")
+    by_strategy = _rows(by_strategy_map, "strategy")
+    by_close_reason = [
+        {"reason": name, "count": len(grp), "pnl": float(sum((_npl(t) for t in grp), Decimal(0)))}
+        for name, grp in sorted(by_reason_map.items())
+    ]
+
+    # P&L distribution by realized_pnl_pct bucket
+    dist_buckets = [
+        ("<-5%", lambda v: v < -5),
+        ("-5 to 0%", lambda v: -5 <= v < 0),
+        ("0 to 2%", lambda v: 0 <= v < 2),
+        ("2 to 5%", lambda v: 2 <= v < 5),
+        (">5%", lambda v: v >= 5),
+    ]
+    dist_counts = {label: 0 for label, _ in dist_buckets}
+    for t in trades:
+        v = t.get("realized_pnl_pct")
+        if v is None:
+            continue
+        for label, pred in dist_buckets:
+            if pred(float(v)):
+                dist_counts[label] += 1
+                break
+    pnl_distribution = [{"bucket": label, "count": dist_counts[label]} for label, _ in dist_buckets]
+
+    # hold-time buckets (hours between opened_at and closed_at)
+    hold_buckets = [
+        ("<1h", lambda h: h < 1),
+        ("1-4h", lambda h: 1 <= h < 4),
+        ("4-24h", lambda h: 4 <= h < 24),
+        (">24h", lambda h: h >= 24),
+    ]
+    hold_groups: dict[str, list[dict]] = {label: [] for label, _ in hold_buckets}
+    for t in trades:
+        if not t.get("opened_at") or not t.get("closed_at"):
+            continue
+        h = (t["closed_at"] - t["opened_at"]).total_seconds() / 3600
+        for label, pred in hold_buckets:
+            if pred(h):
+                hold_groups[label].append(t)
+                break
+    hold_time_buckets = [
+        {"bucket": label, "count": len(hold_groups[label]), "win_rate": _win_rate(hold_groups[label])}
+        for label, _ in hold_buckets
+    ]
+
+    legacy = any((t.get("strategy_kind") or "trend") == "trend" for t in trades)
+
+    return {
+        "by_symbol": by_symbol,
+        "by_strategy": by_strategy,
+        "by_close_reason": by_close_reason,
+        "pnl_distribution": pnl_distribution,
+        "hold_time_buckets": hold_time_buckets,
+        "meta": {"strategy_legacy_approximate": legacy},
+    }
