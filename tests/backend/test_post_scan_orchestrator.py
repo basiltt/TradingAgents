@@ -290,7 +290,80 @@ async def test_run_stage_persists_partial_on_ban_and_continues():
     # BTC placed before the ban must be persisted under execute_batch.
     batch_persists = [syms for (stage, syms) in persisted_stages if stage == "execute_batch"]
     assert any("BTCUSDT" in syms for syms in batch_persists)
-    # The tail completed (summaries present) — the ban did not crash it.
+    # The tail completed (summaries present) -- the ban did not crash it.
     assert out["summaries"]
+
+
+@pytest.mark.asyncio
+async def test_ban_emits_substatus_and_cooloff_for_panel():
+    # TASK-3.2 (R1 fix): a RateGateBanAbort during a stage must EMIT a progress event
+    # carrying substatus="ban" + cooloff_until so the live panel shows the cooloff
+    # countdown (distinct from a micro-throttle). Otherwise the ban UX is dead code.
+    from backend.services.bybit_rate_gate import RateGateBanAbort
+    from backend.services.auto_trade_service import AutoTradeExecutor
+
+    psc.configure_account_concurrency(1)
+    COOLOFF = 1_700_000_000.0
+
+    class BanWithCooloff(RecordingAccountsService):
+        async def place_trade(self, **kwargs):
+            raise RateGateBanAbort(cooloff_until=COOLOFF)
+
+    prog = RecordingProgress()
+    accounts = BanWithCooloff()
+    ex = AutoTradeExecutor(accounts, None, progress=prog, scan_id="scan-ban-emit")
+    ex.init_configs([_cfg("accA")])
+    for st in ex._state.values():
+        st.base_capital = 1000.0
+
+    await ex.run_post_scan_tail(_results("BTC"))
+    ban_events = [e for e in prog.events if e.get("substatus") == "ban"]
+    assert ban_events, "a ban must emit a substatus='ban' progress event for the panel"
+    assert ban_events[0].get("cooloff_until") == COOLOFF
+
+
+def test_wire_reason_code_strips_free_text():
+    # FR-045/R119: a stopped_reason carrying raw exception text must be coerced to a
+    # safe code prefix before it crosses the WS wire (no free-text leak).
+    from backend.services.auto_trade_service import _wire_reason_code
+
+    assert _wire_reason_code("max_trades_reached") == "max_trades_reached"
+    assert _wire_reason_code("wallet_fetch_failed: GET https://api?key=secret 500") == "wallet_fetch_failed"
+    assert _wire_reason_code("positions_fetch_failed: timeout to 1.2.3.4:443") == "positions_fetch_failed"
+    assert _wire_reason_code(None) is None
+    assert _wire_reason_code("") is None
+
+
+@pytest.mark.asyncio
+async def test_emitted_account_event_scrubs_free_text_reason_code():
+    # Integration: the per-account done emit must apply _wire_reason_code so a free-text
+    # stopped_reason (raw exception) never reaches the progress event. Pins the emit
+    # SITE, not just the helper — reverting reason_code=_wire_reason_code(...) to a raw
+    # stopped_reason would fail this.
+    from backend.services.auto_trade_service import AutoTradeExecutor
+
+    psc.configure_account_concurrency(1)
+    prog = RecordingProgress()
+    accounts = RecordingAccountsService()
+    ex = AutoTradeExecutor(accounts, None, progress=prog, scan_id="scrub-1")
+    ex.init_configs([_cfg("accA")])
+    state = list(ex._state.values())[0]
+    state.base_capital = 1000.0
+    # Seed a free-text exception stop reason (the leak vector).
+    state.stopped = True
+    state.stopped_reason = "wallet_fetch_failed: GET https://api.bybit.com?api_key=SECRET 500"
+
+    await ex.run_post_scan_tail(_results("BTC"))
+    # No emitted event's reason_code may contain the free-text/secret tail.
+    for e in prog.events:
+        rc = e.get("reason_code")
+        if rc is not None:
+            assert "SECRET" not in rc and "https" not in rc and ":" not in rc, (
+                f"free-text leaked via reason_code on the wire: {rc!r}"
+            )
+    # The scrubbed code prefix IS present on the per-account row.
+    acct_codes = [e.get("reason_code") for e in prog.events if e.get("acct_ordinal") == 1]
+    assert "wallet_fetch_failed" in acct_codes
+
 
 

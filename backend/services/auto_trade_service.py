@@ -58,6 +58,22 @@ def _sanitize_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
     return {k: v for k, v in cfg.items() if not any(b in k.lower() for b in bad)}
 
 
+def _wire_reason_code(stopped_reason: Optional[str]) -> Optional[str]:
+    """Coerce a stopped_reason to a SAFE, enum-like code for the WS wire (FR-045/R119).
+
+    Most stop reasons are already short enum codes (e.g. "max_trades_reached",
+    "positions_already_open"), but two branches embed raw exception text —
+    ``f"wallet_fetch_failed: {str(e)[:200]}"`` and
+    ``f"positions_fetch_failed: {str(e)[:200]}"`` — which could carry URLs, params, or
+    server messages. The live progress payload must never leak free-text error strings
+    (the wire allow-list keeps account_id/label off the wire; reason_code must likewise
+    stay a code). Strip anything after the first ``:`` so only the stable code prefix
+    crosses the wire; the full text remains in the server-side logs."""
+    if not stopped_reason:
+        return None
+    return str(stopped_reason).split(":", 1)[0].strip() or None
+
+
 @dataclass
 class TradeExecution:
     """Outcome record for one attempted auto-trade (account, symbol, side, status, order id/error)."""
@@ -1021,10 +1037,19 @@ class AutoTradeExecutor:
             self._last_partial_merge = []
             try:
                 execs = await coro_factory()
-            except RateGateBanAbort:
+            except RateGateBanAbort as ban:
                 partial = list(self._last_partial_merge)
                 logger.warning("post_scan_tail_stage_rate_ban", extra={
                     "stage": stage, "scan_id": self._scan_id, "partial_count": len(partial)})
+                # TASK-3.2: surface the confirmed IP-ban cooloff to the live panel so it
+                # shows the "Trading paused ~Nm — rate-limit cooloff" countdown (distinct
+                # from a micro-throttle). cooloff_until is the wall-clock epoch the gate
+                # captured on the ban; the FE renders a countdown + warns the user not to
+                # force-kill (which would extend the ban).
+                self._emit_progress(
+                    stage, "", status="active", phase=stage,
+                    substatus="ban", cooloff_until=getattr(ban, "cooloff_until", None),
+                )
                 all_executions.extend(partial)
                 await _persist(stage, partial)
                 return partial
@@ -1080,6 +1105,30 @@ class AutoTradeExecutor:
         summaries = self.get_summaries()
         self._emit_progress("summaries", "", status="done",
                             pct=self._TAIL_STAGE_DONE_PCT["summaries"])
+
+        # Money-safety self-check (TASK-3.5): assert no duplicate / over-cap placement
+        # survived the parallel fan-out. Fail-OPEN — a violation is logged HIGH for an
+        # operator alert but NEVER raises (the orders already happened; blocking here
+        # would only hide them). The per-account partition makes this impossible; the
+        # check is the regression net if that invariant ever breaks.
+        if place_trades:
+            try:
+                from backend.services.post_scan_detectors import (
+                    find_duplicate_placements,
+                    find_over_cap_accounts,
+                )
+                dups = find_duplicate_placements(self)
+                over = find_over_cap_accounts(self)
+                if dups or over:
+                    logger.error("post_scan_placement_integrity_violation", extra={
+                        "severity": "high", "scan_id": self._scan_id,
+                        "duplicates": dups[:20], "over_cap": over[:20],
+                    })
+            except Exception as e:
+                # The self-check must never break the tail, but a FAILED detector means
+                # the money-safety net is silently disabled — log it (don't swallow).
+                logger.warning("post_scan_integrity_check_failed", extra={
+                    "scan_id": self._scan_id, "error": str(e)[:200]})
 
         # Terminal event: FR-036 requires the FINAL results to be committed to the DB
         # BEFORE the terminal "complete" event reaches the client (else a client that
@@ -1187,7 +1236,7 @@ class AutoTradeExecutor:
                         trades_executed=self._account_trades(account_id, "executed"),
                         trades_failed=self._account_trades(account_id, "failed"),
                         trades_skipped=self._account_trades(account_id, "skipped"),
-                        reason_code=(st.stopped_reason if st else None),
+                        reason_code=_wire_reason_code(st.stopped_reason if st else None),
                     )
 
             tasks = [

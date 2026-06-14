@@ -115,4 +115,68 @@ describe("PostScanExecutionPanel", () => {
       vi.useRealTimers();
     }
   });
+
+  it("stepper stage keys match the backend orchestrator emit keys", () => {
+    // Regression: the stepper labels each backend stage. Driving the real emit keys
+    // (execute_batch/fill/post_scan_recheck/cleanup/summaries) must mark those steps
+    // active/done — NOT leave them stuck pending under stale keys.
+    const { container } = render(
+      <PostScanExecutionPanel
+        {...defaults()}
+        connected={true}
+        steps={[
+          { stage: "execute_batch", status: "done", pct: 20 },
+          { stage: "fill", status: "done", pct: 40 },
+          { stage: "post_scan_recheck", status: "active", pct: 60 },
+        ]}
+        accounts={[{ acctOrdinal: 1, status: "active", tradesExecuted: 1, tradesFailed: 0, tradesSkipped: 0 }]}
+      />,
+    );
+    // The stepper renders all five stage labels (the keys resolve, not all-pending).
+    expect(container.textContent).toContain("Placing batch orders");
+    expect(container.textContent).toContain("Filling remaining slots");
+    expect(container.textContent).toContain("Re-checking accounts");
+    expect(container.textContent).toContain("Cleaning up rules");
+    expect(container.textContent).toContain("Finalizing summaries");
+    // execute_batch + fill report done; recheck reports active — at least one "done".
+    expect(container.textContent).toContain("done");
+    expect(container.textContent).toContain("active");
+  });
+
+  it("micro-throttle (rate_wait) renders a distinct hint, not the ban cooloff", () => {
+    const { container, queryByText } = render(
+      <PostScanExecutionPanel
+        {...defaults()}
+        connected={true}
+        steps={[{ stage: "execute_batch", status: "active", pct: 20 }]}
+        accounts={[{
+          acctOrdinal: 1, status: "active", tradesExecuted: 0, tradesFailed: 0,
+          tradesSkipped: 0, substatus: "rate_wait",
+        }]}
+      />,
+    );
+    expect(container.textContent).toContain("rate limit");
+    // It is NOT the confirmed-ban cooloff banner (no cooloffUntil set).
+    expect(queryByText(/rate-limit cooloff/)).toBeNull();
+  });
+
+  it("live order feed shows a check for a 'placed' order (backend success status)", () => {
+    // The backend emits per-symbol status="placed" for a successful order (NOT "done").
+    // The feed must render a success check, not blank.
+    const { container } = render(
+      <PostScanExecutionPanel
+        {...defaults()}
+        connected={true}
+        steps={[{ stage: "execute_batch", status: "active", pct: 20 }]}
+        orders={[
+          { seq: 2, acctOrdinal: 1, symbol: "BTCUSDT", side: "buy", status: "placed" },
+          { seq: 1, acctOrdinal: 1, symbol: "ETHUSDT", side: "sell", status: "failed" },
+        ]}
+      />,
+    );
+    // Both the placed (BTC) and failed (ETH) rows render; the placed one is not blank.
+    expect(container.textContent).toContain("BTCUSDT");
+    expect(container.textContent).toContain("✓"); // placed -> success check
+    expect(container.textContent).toContain("✗"); // failed -> cross
+  });
 });

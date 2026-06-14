@@ -77,24 +77,34 @@ class Placement:
 
 
 class RateAwareThrottle:
-    """Models Bybit's per-account 10006 throttle in a RATE-aware, deterministic way.
+    """Models Bybit's 10006 throttle in a RATE-aware, deterministic way.
 
-    The executor calls place_trade through the rate gate; if a test removes the
-    gate (or sets width too high) the harness should be able to surface the same
-    10006 the real exchange would. We approximate "rate" deterministically by
-    COUNTING concurrent in-flight placements per account rather than using a wall
-    clock (clocks are banned for determinism): if more than ``max_in_flight``
-    placements for one account are simultaneously inside place_trade, the excess
-    ones raise. With width=1 the in-flight count never exceeds 1, so a threshold
-    >= 1 never fires on the sequential path (golden-safe).
+    The real 10006 is IP/UID-GLOBAL — it fires when too many calls are in flight
+    against the one connection, regardless of which account they belong to. So by
+    default this counts GLOBAL in-flight placements and trips when the total exceeds
+    ``max_in_flight``. That makes it a meaningful proof: at account-concurrency width W
+    the process-wide semaphore caps global in-flight at W, so a threshold of W never
+    trips while a threshold of W-1 MUST trip (the negative control).
+
+    ``scope="account"`` keeps the legacy per-account counting (used only by the harness
+    self-tests that exercise single-account concurrency). For the gate/benchmark proof,
+    use the default ``scope="global"``.
     """
 
-    def __init__(self, max_in_flight: int) -> None:
+    def __init__(self, max_in_flight: int, *, scope: str = "global") -> None:
         self._max = max_in_flight
+        self._scope = scope
         self._in_flight: Dict[str, int] = {}
+        self._global_in_flight = 0
         self.tripped = 0
 
     def enter(self, account_id: str) -> bool:
+        if self._scope == "global":
+            self._global_in_flight += 1
+            if self._global_in_flight > self._max:
+                self.tripped += 1
+                return False
+            return True
         n = self._in_flight.get(account_id, 0) + 1
         self._in_flight[account_id] = n
         if n > self._max:
@@ -103,6 +113,9 @@ class RateAwareThrottle:
         return True
 
     def exit(self, account_id: str) -> None:
+        if self._scope == "global":
+            self._global_in_flight = max(0, self._global_in_flight - 1)
+            return
         n = self._in_flight.get(account_id, 0) - 1
         self._in_flight[account_id] = max(0, n)
 

@@ -10,14 +10,17 @@ import type {
 
 const SECTION = "neu-surface-base neu-surface-raised rounded-[var(--neu-radius-lg)] border-none shadow-[var(--shadow-card)]";
 
-/** Ordered post-scan pipeline stages, pre-seeded so the full shape is visible. */
+/** Ordered post-scan pipeline stages. Keys MUST match the backend orchestrator's
+ *  emit stages (auto_trade_service.run_post_scan_tail / _TAIL_STAGE_DONE_PCT):
+ *  execute_batch -> fill -> post_scan_recheck -> cleanup -> summaries. init_balances
+ *  runs pre-tail (no live stage emit) but is shown for shape; a missing stage stays
+ *  "pending" which is correct for it. */
 const STAGE_ORDER: { key: string; label: string }[] = [
-  { key: "init_balances", label: "Loading balances" },
   { key: "execute_batch", label: "Placing batch orders" },
-  { key: "fill_immediate", label: "Filling remaining slots" },
+  { key: "fill", label: "Filling remaining slots" },
   { key: "post_scan_recheck", label: "Re-checking accounts" },
-  { key: "cleanup_rules", label: "Cleaning up rules" },
-  { key: "account_summaries", label: "Finalizing summaries" },
+  { key: "cleanup", label: "Cleaning up rules" },
+  { key: "summaries", label: "Finalizing summaries" },
 ];
 
 type StepStatus = "pending" | "active" | "done" | "failed" | "skipped";
@@ -220,6 +223,24 @@ export function PostScanExecutionPanel({
               <span className="text-[var(--neu-success)]">{a.tradesExecuted}✓</span>
               <span className="text-[var(--neu-danger)]">{a.tradesFailed}✗</span>
               <span className="text-[var(--neu-text-muted)]">{a.tradesSkipped}⏭</span>
+              {a.substatus === "rate_wait" ? (
+                // DEFERRED (TASK-3.5): the near-ban "rate_wait" substatus is not yet
+                // emitted by the backend — the gate instrumentation hook is pending. This
+                // per-account micro-throttle pill is wired and ready; until that emit
+                // lands the live ban signal is the GLOBAL cooloff banner above. Keep so
+                // the UI lights up the moment the backend emits substatus.
+                <span className="inline-flex items-center gap-1 rounded-full bg-[color-mix(in_oklch,var(--neu-accent)_10%,transparent)] px-2 py-0.5 text-[9px] font-medium uppercase tracking-[0.12em] text-[var(--neu-accent)]">
+                  <span className="size-1.5 animate-pulse rounded-full bg-[var(--neu-accent)]" aria-hidden />
+                  rate limit
+                </span>
+              ) : a.substatus === "ban" ? (
+                // DEFERRED (TASK-3.5): the backend currently emits the ban at STAGE level
+                // (global cooloff banner), not per-account, so this badge is ready but
+                // not yet driven. See the cooloff banner above for the live ban signal.
+                <span className="rounded-full bg-[color-mix(in_oklch,var(--neu-warning)_12%,transparent)] px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-[var(--neu-warning)]">
+                  paused
+                </span>
+              ) : null}
               {a.stoppedReason ? (
                 <span className="ml-auto text-[10px] uppercase tracking-[0.12em] text-[var(--neu-warning)]">
                   {a.stoppedReason.replace(/_/g, " ")}
@@ -239,7 +260,7 @@ export function PostScanExecutionPanel({
               {o.side ? <span className={cn("uppercase", SIDE_TONE[o.side])}>{o.side}</span> : null}
               <span className="text-[10px] text-[var(--neu-text-muted)]">acct#{o.acctOrdinal}</span>
               <span className="ml-auto">
-                {o.status === "done" ? (
+                {o.status === "placed" || o.status === "done" ? (
                   <span className="text-[var(--neu-success)]">✓</span>
                 ) : o.status === "failed" ? (
                   <span className="text-[var(--neu-danger)]">✗</span>
