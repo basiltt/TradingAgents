@@ -71,5 +71,18 @@ Legend: ✅ implemented + tested · 🔁 runtime-revertable (kill-switch) · �
 | Operator trust-boundary token (TASK-3.3) | Default width=1 makes the width-override inert; loopback-peer gate is the MUST, token is SHOULD for first ship. | Plan §3.3 |
 | Steady-state non-tail regression sweep (TASK-3.7) | Phase 0 channel fix already covered by `test_bybit_*`; broader per-subsystem sweep is additive. | Plan §3.7 |
 | Per-account `substatus` pills (rate_wait micro-throttle + per-account ban badge) | The near-ban `substatus="rate_wait"` gate-instrumentation hook (TASK-3.5) is unwired; the ban is emitted at STAGE level (global cooloff banner, which IS live). The per-account pills are UI-ready and light up the moment the backend emits a per-account substatus. | `PostScanExecutionPanel.tsx` (DEFERRED comments), DOD-GATE operator notes |
+
+---
+
+## Architecture follow-ups (final-review MEDIUM — non-blocking backlog)
+
+Recorded from Step 14 final review. None block merge (default width=1 ships byte-identical); all are future maintainability improvements:
+
+| Item | Note |
+|---|---|
+| Extract a `PostScanTailOrchestrator` | `auto_trade_service.py` is large (~2.6k lines) fusing executor + orchestrator + fan-out + emits. The orchestrator cluster (`run_post_scan_tail`, `_run_stage`, `_fan_out_by_account`, `_emit_*`, `_account_trades`, `_acct_ordinal_map`) is a clean future extraction. Detectors already left the file. |
+| Unify `post_scan_recheck` onto `_fan_out_by_account` | Recheck rolls its own fan-out (own `recheck_slots` + gather + finally-merge). It IS correct (stashes `_last_partial_merge` at L1817 — verified, the final-review HIGH was a false alarm), but the merge-before-reraise invariant now lives in two copies; unifying would prevent future drift. |
+| Localize the FR-036 terminal-ordering protocol | Both call sites hand-roll `try_begin_tail → run_post_scan_tail(emit_complete=False) → commit → emit_tail_complete() → end_tail`. A thin `run_tail_with_terminal(executor, persist_cb, commit_cb)` helper would keep the commit-before-terminal invariant synchronized. |
+| Document the dual stage namespace | `_fan_out_by_account` emits per-account `stage=mode` ("batch"/"immediate") while the orchestrator emits "execute_batch"/"fill" for the same step; reconciled only by the FE filtering acct_ordinal-bearing events out of the stepper. A comment at the emit site would prevent confusion. |
 | Width-change-mid-flight semaphore split | Rare manual operator action; over-concurrency only (not double-placement); per-channel caps are the backstop. | `post_scan_concurrency.py` docstring |
 | `acct_ordinal` cross-scan salting (R119) | The ordinal (1,2,3…) is stable cross-scan but carries NO identity — `account_id` never crosses the wire (stripped by the allow-list); single-tenant deployment. Consciously simplified to refresh-stable-per-scan; an observer cannot resolve `acct#N` to an account. | `auto_trade_service.py` `_acct_ordinal_map`, `ws_scan_progress.py` allow-list |
