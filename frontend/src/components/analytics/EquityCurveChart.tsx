@@ -1,100 +1,54 @@
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceDot, ResponsiveContainer } from "recharts";
 import { useId } from "react";
-import type { DailySnapshot } from "@/api/client";
+import type { CurvePoint, EquityNow } from "./performanceTypes";
 
 interface Props {
-  snapshots: DailySnapshot[];
+  data: CurvePoint[];
+  /** optional absolute-equity offset D for the secondary "your equity" axis */
+  startingEquity?: number | null;
+  equityNow?: EquityNow | null;
 }
 
-export function EquityCurveChart({ snapshots }: Props) {
+export function EquityCurveChart({ data, startingEquity, equityNow }: Props) {
   const gradId = useId().replace(/:/g, "");
-  const data = snapshots.map((s) => ({
-    date: s.snapshot_date,
-    equity: Math.round(s.equity * 100) / 100,
-    peak: Math.round(s.peak_equity * 100) / 100,
+  if (data.length === 0) {
+    return (
+      <div className="flex h-[300px] items-center justify-center text-[var(--neu-text-soft)]">
+        No closed trades in this range
+      </div>
+    );
+  }
+  const rows = data.map((p) => ({
+    t: p.t,
+    cum_pnl: Math.round(p.cum_pnl * 100) / 100,
+    equity: startingEquity != null ? Math.round((startingEquity + p.cum_pnl) * 100) / 100 : undefined,
   }));
-
-  if (data.length === 0) return null;
-
-  const minVal = data.reduce((min, d) => d.equity < min ? d.equity : min, data[0].equity);
-  const maxVal = data.reduce((max, d) => {
-    const v = Math.max(d.equity, d.peak);
-    return v > max ? v : max;
-  }, Math.max(data[0].equity, data[0].peak));
-  const pad = Math.max(Math.abs(maxVal - minVal) * 0.02, 1);
-  const minEquity = minVal - pad;
-  const maxEquity = maxVal + pad;
-
   return (
     <ResponsiveContainer width="100%" height={300}>
-      <AreaChart data={data}>
+      <AreaChart data={rows}>
         <defs>
           <linearGradient id={`eq-${gradId}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor="var(--primary)" stopOpacity={0.3} />
-            <stop offset="95%" stopColor="var(--primary)" stopOpacity={0} />
+            <stop offset="0%" stopColor="var(--neu-accent)" stopOpacity={0.35} />
+            <stop offset="100%" stopColor="var(--neu-accent)" stopOpacity={0} />
           </linearGradient>
         </defs>
-        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
-        <XAxis
-          dataKey="date"
-          tick={{ fill: "var(--muted-foreground)", fontSize: 10 }}
-          tickLine={false}
-          axisLine={false}
-          tickFormatter={(v: string) => {
-            if (v.includes(" ")) {
-              const [, time] = v.split(" ");
-              return time.slice(0, 5);
-            }
-            const [, m, d] = v.split("-");
-            return `${parseInt(m)}/${parseInt(d)}`;
-          }}
-        />
-        <YAxis
-          tick={{ fill: "var(--muted-foreground)", fontSize: 10 }}
-          tickLine={false}
-          axisLine={false}
-          domain={[minEquity, maxEquity]}
-          tickFormatter={(v: number) => v < 0 ? `-$${Math.abs(v).toFixed(0)}` : `$${v.toFixed(0)}`}
-        />
-        <Tooltip
-          contentStyle={{
-            backgroundColor: "var(--card)",
-            border: "1px solid var(--border)",
-            borderRadius: "12px",
-            fontSize: 11,
-          }}
-          formatter={(value: unknown, name: unknown) => [
-            Number(value) < 0 ? `-$${Math.abs(Number(value)).toFixed(2)}` : `$${Number(value).toFixed(2)}`,
-            name === "equity" ? "Equity" : "Peak",
-          ]}
-          labelFormatter={(label: unknown) => {
-            const s = String(label);
-            if (s.includes(" ")) {
-              const [datePart, time] = s.split(" ");
-              const [y, m, d] = datePart.split("-");
-              return `${parseInt(m)}/${parseInt(d)}/${y} ${time}`;
-            }
-            const [y, m, d] = s.split("-");
-            return `${parseInt(m)}/${parseInt(d)}/${y}`;
-          }}
-        />
+        <CartesianGrid stroke="var(--neu-border)" strokeDasharray="3 3" />
+        <XAxis dataKey="t" tick={{ fill: "var(--neu-text-soft)", fontSize: 11 }} minTickGap={32} />
+        <YAxis yAxisId="pnl" tick={{ fill: "var(--neu-text-soft)", fontSize: 11 }} />
+        {startingEquity != null && (
+          <YAxis yAxisId="eq" orientation="right" tick={{ fill: "var(--neu-text-soft)", fontSize: 11 }} />
+        )}
+        <Tooltip />
         <Area
+          yAxisId="pnl"
           type="monotone"
-          dataKey="peak"
-          stroke="var(--muted-foreground)"
-          strokeDasharray="4 4"
-          strokeWidth={1}
-          fill="none"
-          dot={false}
-        />
-        <Area
-          type="monotone"
-          dataKey="equity"
-          stroke="var(--primary)"
-          strokeWidth={2}
+          dataKey="cum_pnl"
+          stroke="var(--neu-accent)"
           fill={`url(#eq-${gradId})`}
-          dot={false}
         />
+        {equityNow && startingEquity != null && (
+          <ReferenceDot yAxisId="eq" x={equityNow.t} y={equityNow.equity} r={4} fill="var(--neu-accent)" />
+        )}
       </AreaChart>
     </ResponsiveContainer>
   );
