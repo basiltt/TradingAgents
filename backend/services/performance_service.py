@@ -537,6 +537,90 @@ class PerformanceService:
         trades = await self._fetch_scoped(account_ids, account_id, account_type, start=start, end=end)
         return compute_breakdowns(trades)
 
+    async def compute_live(self, *, scope: str) -> dict:
+        """Live tab (Phase 5): open positions, account tiles, sector concentration.
+
+        Exchange-bound and FAIL-SOFT: each account's live fetch is wrapped so one failing
+        account cannot blank the tab. Returns partial data with degraded=True and per-account
+        `error`. Sector concentration is computed inline from open positions + symbol_sectors
+        (no separate sector endpoint — spec §11 Q3 decision).
+        """
+        empty = {"positions": [], "account_tiles": [], "sector_concentration": [], "degraded": True}
+        if self._accounts is None:
+            return empty
+        account_ids, account_type, account_id = await self._resolve_scope(scope)
+        if not account_ids:
+            return {**empty, "degraded": True}
+        wanted = set(account_ids)
+        degraded = False
+
+        # account tiles from the dashboard aggregation (best-effort)
+        cards_by_id: dict[str, dict] = {}
+        try:
+            cards = await self._accounts.get_dashboard()
+            cards_by_id = {c.get("id"): c for c in cards if c.get("id") in wanted}
+        except Exception:  # noqa: BLE001
+            degraded = True
+
+        positions: list[dict] = []
+        tiles: list[dict] = []
+        for aid in account_ids:
+            card = cards_by_id.get(aid, {})
+            err = None
+            try:
+                raw = await self._accounts.get_positions(aid)
+                for p in raw:
+                    entry = float(p.get("avgPrice") or 0)
+                    upl = float(p.get("unrealisedPnl") or 0)
+                    notional = float(p.get("positionValue") or 0)
+                    upl_pct = (upl / notional * 100) if notional else None
+                    positions.append({
+                        "account_id": aid, "symbol": p.get("symbol"), "side": p.get("side"),
+                        "size": float(p.get("size") or 0), "leverage": float(p.get("leverage") or 0),
+                        "entry": entry, "unrealized_pnl": upl, "unrealized_pnl_pct": upl_pct,
+                    })
+            except Exception as exc:  # noqa: BLE001 — one bad account must not 500 the tab
+                err = str(exc)[:200]
+                degraded = True
+            tiles.append({
+                "account_id": aid,
+                "label": card.get("label") or aid,
+                "type": card.get("account_type"),
+                "equity": float(card["total_equity"]) if card.get("total_equity") not in (None, "") else None,
+                "today_pnl": float(card["today_pnl"]) if card.get("today_pnl") not in (None, "") else None,
+                "positions_count": int(card.get("positions_count") or 0),
+                "error": err,
+            })
+
+        # sector concentration from open positions + DB sector lookup
+        sector_concentration: list[dict] = []
+        if positions:
+            symbols = list({p["symbol"] for p in positions if p["symbol"]})
+            sectors = await self._db.get_symbol_sectors(symbols)
+            by_sector: dict[str, dict] = {}
+            total_notional = 0.0
+            for p in positions:
+                sec = sectors.get(p["symbol"], "Other")
+                notional = abs(p["size"] * p["entry"])
+                total_notional += notional
+                s = by_sector.setdefault(sec, {"sector": sec, "exposure": 0.0, "positions": 0})
+                s["exposure"] += notional
+                s["positions"] += 1
+            for s in by_sector.values():
+                sector_concentration.append({
+                    "sector": s["sector"],
+                    "exposure_pct": round(s["exposure"] / total_notional * 100, 2) if total_notional else 0.0,
+                    "positions": s["positions"],
+                })
+            sector_concentration.sort(key=lambda r: r["exposure_pct"], reverse=True)
+
+        return {
+            "positions": positions,
+            "account_tiles": tiles,
+            "sector_concentration": sector_concentration,
+            "degraded": degraded,
+        }
+
     async def _compute_prev(self, scope, timeframe, anchor, account_ids, account_id,
                             account_type, D, d_accounts) -> dict | None:
         """Prior equal-length window KPIs for hero delta chips. None for ALL.

@@ -416,3 +416,54 @@ class TestComputeTradesPage:
         r1 = res["rows"][1]
         assert r1["net_pnl_pct"] is None
         assert r1["hold_hours"] is None
+
+
+class TestComputeLive:
+    @pytest.mark.asyncio
+    async def test_fail_soft_one_account_raises(self):
+        from unittest.mock import AsyncMock, MagicMock
+        from backend.services.performance_service import PerformanceService
+
+        db = MagicMock()
+        db.get_scope_account_ids = AsyncMock(return_value=["a1", "a2"])
+        db.get_symbol_sectors = AsyncMock(return_value={"BTCUSDT": "L1"})
+        accounts = MagicMock()
+        # dashboard provides tiles for both accounts
+        accounts.get_dashboard = AsyncMock(return_value=[
+            {"id": "a1", "label": "A1", "account_type": "live", "total_equity": "100",
+             "today_pnl": "1.2", "positions_count": 1},
+            {"id": "a2", "label": "A2", "account_type": "demo", "total_equity": "50",
+             "today_pnl": "0", "positions_count": 0},
+        ])
+        # a1 positions OK; a2 raises -> degraded, but a1 still present
+        async def _positions(acc_id):
+            if acc_id == "a2":
+                raise RuntimeError("bybit down for a2")
+            return [{"symbol": "BTCUSDT", "side": "Buy", "size": "0.1",
+                     "leverage": "20", "avgPrice": "2950", "unrealisedPnl": "-1.6",
+                     "positionValue": "295"}]
+        accounts.get_positions = AsyncMock(side_effect=_positions)
+
+        svc = PerformanceService(db=db, accounts_service=accounts)
+        res = await svc.compute_live(scope="all")
+
+        assert res["degraded"] is True
+        # a1's position present
+        assert any(p["symbol"] == "BTCUSDT" for p in res["positions"])
+        # both tiles present; a2 carries an error
+        tiles = {t["account_id"]: t for t in res["account_tiles"]}
+        assert tiles["a2"]["error"] is not None
+        assert tiles["a1"]["error"] is None
+        # sector concentration computed from positions
+        assert any(s["sector"] == "L1" for s in res["sector_concentration"])
+
+    @pytest.mark.asyncio
+    async def test_no_accounts_service_is_fully_degraded(self):
+        from unittest.mock import AsyncMock, MagicMock
+        from backend.services.performance_service import PerformanceService
+        db = MagicMock()
+        db.get_scope_account_ids = AsyncMock(return_value=["a1"])
+        svc = PerformanceService(db=db, accounts_service=None)
+        res = await svc.compute_live(scope="all")
+        assert res["degraded"] is True
+        assert res["positions"] == []

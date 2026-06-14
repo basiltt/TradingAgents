@@ -2957,6 +2957,18 @@ class AsyncAnalysisDB:
             next_cursor = (sort_value, last["id"])
         return rows, next_cursor, has_more
 
+    async def get_symbol_sectors(self, symbols: list[str]) -> dict[str, str]:
+        """Map open-position symbols to their sector (for Live-tab concentration).
+
+        DB-only lookup against symbol_sectors; symbols without a row map to "Other".
+        """
+        if not symbols:
+            return {}
+        rows = await self.pool.fetch(
+            "SELECT symbol, sector FROM symbol_sectors WHERE symbol = ANY($1)", symbols,
+        )
+        return {r["symbol"]: r["sector"] for r in rows}
+
     async def get_latest_snapshot(self, account_id: str) -> Optional[Dict[str, Any]]:
         """Return an account's most recent daily snapshot, or None if none exist."""
         row = await self.pool.fetchrow(
