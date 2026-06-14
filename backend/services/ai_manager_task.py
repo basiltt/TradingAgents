@@ -1579,15 +1579,33 @@ class AIManagerTask:
         locked = set(self._config.locked_positions or [])
 
         if trigger_reason.startswith("equity_drop"):
-            # Account-wide crash: close ALL losing positions (capital preservation)
-            close_symbols = []
-            for pos in positions:
+            # Account-wide crash: close ALL losing positions (capital preservation).
+            # FIX-002: enumerate losers from the AUTHORITATIVE exchange snapshot UNIONed
+            # with the WS-buffer losers. The WS position buffer is event-sourced and
+            # eventually-consistent — during a fast cascade it can be MISSING a still-open
+            # loser (the Unni ESPORTS bug: the buffer listed two positions that had just
+            # closed on their own stops but not the open ESPORTS). Unioning the exchange
+            # truth with the buffer guarantees we never close FEWER losers than before,
+            # only ever catch ones the buffer dropped. Falls back to the buffer alone if
+            # the exchange fetch fails (never crash the emergency, never shrink the set).
+            loser_symbols: set[str] = set()
+            for pos in positions:  # WS-buffer losers (existing behavior, as a floor)
                 symbol = pos.get("symbol", "")
-                if not symbol or symbol in excluded or symbol in locked:
-                    continue
-                upnl = _extract_upnl(pos)
-                if upnl < 0:
-                    close_symbols.append(symbol)
+                if symbol and _extract_upnl(pos) < 0:
+                    loser_symbols.add(symbol)
+            try:
+                accounts_service = getattr(self._service, "_accounts_service", None)
+                if accounts_service is not None:
+                    exch_positions = await accounts_service.get_positions(self._account_id) or []
+                    for pos in exch_positions:  # authoritative exchange losers
+                        symbol = pos.get("symbol", "")
+                        if symbol and _extract_upnl(pos) < 0:
+                            loser_symbols.add(symbol)
+            except Exception:
+                # Fail-safe: keep the WS-buffer loser set; do not abort the emergency.
+                self._log.warning("Emergency equity-drop: exchange position fetch failed; "
+                                  "using WS-buffer losers only")
+            close_symbols = [s for s in loser_symbols if s not in excluded and s not in locked]
         elif trigger_reason == "position_hard_loss":
             # FIX-003: close only the specific position(s) over the hard-loss cap,
             # sparing MR/locked/excluded (same filter as the other branches).
@@ -1701,10 +1719,32 @@ class AIManagerTask:
                     "strategy_version": self._config.strategy_version,
                     "chain_key_version": _CHAIN_KEY_VERSION,
                 }
-                await self._service._repo.insert_decision(
+                decision_id, decision_ts = await self._service._repo.insert_decision(
                     self._account_id, decision_data,
                     self._service._hmac_key or "no-hmac-configured",
                 )
+                # FIX-002: persist the execution OUTCOME on the emergency decision.
+                # Previously the emergency path called insert_decision but never
+                # update_decision_outcome, so execution_result stayed NULL — the forensic
+                # record showed an emergency "fired" with no evidence of what it closed
+                # (the Unni ESPORTS investigation hit exactly this blind spot). Mirror the
+                # standard path: write the close outcome so the audit trail is complete.
+                try:
+                    _realized = close_result.get("realized_pnl")
+                    if _realized is None:
+                        _realized = estimated_upnl
+                    await self._service._repo.update_decision_outcome(
+                        decision_id, decision_ts,
+                        {
+                            "status": "closed" if closed > 0 else "no_op",
+                            "closed": closed,
+                            "symbols": symbols,
+                            "realized_pnl": float(_realized or 0.0),
+                            "close_result": close_result,
+                        },
+                    )
+                except Exception:
+                    self._log.warning("Failed to persist emergency execution_result")
             return True
         except Exception:
             self._log.exception("Emergency batch close FAILED")
