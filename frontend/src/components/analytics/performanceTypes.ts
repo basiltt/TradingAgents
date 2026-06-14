@@ -67,3 +67,37 @@ export interface PerformanceOverview {
   monthly_pnl: MonthlyPnlPoint[];
   meta: PerformanceMeta;
 }
+
+// ── Trades tab (Phase 3) ─────────────────────────────────────────────────────
+export interface SymbolRow { symbol: string; trades: number; count: number; pnl: number; win_rate: number | null; }
+export interface StrategyRow { strategy: string; trades: number; count: number; pnl: number; win_rate: number | null; }
+export interface CloseReasonRow { reason: string; count: number; pnl: number; }
+export interface DistributionRow { bucket: string; count: number; }
+export interface HoldTimeRow { bucket: string; count: number; win_rate: number | null; }
+
+export interface TradesBreakdown {
+  by_symbol: SymbolRow[];
+  by_strategy: StrategyRow[];
+  by_close_reason: CloseReasonRow[];
+  pnl_distribution: DistributionRow[];
+  hold_time_buckets: HoldTimeRow[];
+  meta: { strategy_legacy_approximate: boolean };
+}
+
+export interface TradeRow {
+  id: string;
+  symbol: string;
+  side: string;
+  net_pnl: number | null;
+  net_pnl_pct: number | null;
+  close_reason: string | null;
+  opened_at: string | null;
+  closed_at: string | null;
+  hold_hours: number | null;
+}
+
+export interface TradesPage {
+  rows: TradeRow[];
+  cursor: string | null;
+  has_more: boolean;
+}

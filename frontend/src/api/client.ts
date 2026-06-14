@@ -12,7 +12,7 @@ import type {
   TradeStatsResponse,
   TradeEventsResponse,
 } from "@/components/trades/types";
-import type { PerformanceOverview } from "@/components/analytics/performanceTypes";
+import type { PerformanceOverview, TradesBreakdown, TradesPage } from "@/components/analytics/performanceTypes";
 import type {
   BacktestRun,
   BacktestCreateRequest,
@@ -957,6 +957,25 @@ export const performanceApi = {
   getOverview: (scope: string, timeframe: string, signal?: AbortSignal) =>
     request<PerformanceOverview>(
       buildQuery("/api/v1/performance/overview", { scope, timeframe }),
+      undefined,
+      signal,
+    ),
+  getTradesBreakdown: (scope: string, timeframe: string, signal?: AbortSignal) =>
+    request<TradesBreakdown>(
+      buildQuery("/api/v1/performance/trades-breakdown", { scope, timeframe }),
+      undefined,
+      signal,
+    ),
+  getTradesPage: (
+    scope: string, timeframe: string,
+    opts?: { sort?: string; dir?: string; cursor?: string; limit?: number },
+    signal?: AbortSignal,
+  ) =>
+    request<TradesPage>(
+      buildQuery("/api/v1/performance/trades", {
+        scope, timeframe,
+        sort: opts?.sort, dir: opts?.dir, cursor: opts?.cursor, limit: opts?.limit,
+      }),
       undefined,
       signal,
     ),

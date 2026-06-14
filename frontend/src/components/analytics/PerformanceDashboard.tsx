@@ -6,6 +6,7 @@ import { usePerformanceOverview } from "./hooks/usePerformance";
 import { PerformanceControlBar } from "./PerformanceControlBar";
 import { PerformanceHeroStrip } from "./PerformanceHeroStrip";
 import { OverviewTab } from "./tabs/OverviewTab";
+import { TradesTab } from "./tabs/TradesTab";
 import type { PerformanceTimeframe } from "./performanceTypes";
 
 interface Props { embedded?: boolean; accountId?: string; }
@@ -85,7 +86,10 @@ export function PerformanceDashboard({ embedded = false, accountId }: Props) {
               value={tab}
               onValueChange={setTab}
               variant="inset"
-              items={[{ value: "overview", label: "Overview", content: <OverviewTab overview={data} /> }]}
+              items={[
+                { value: "overview", label: "Overview", content: <OverviewTab overview={data} /> },
+                { value: "trades", label: "Trades", content: <TradesTab scope={effectiveScope} timeframe={timeframe} /> },
+              ]}
             />
           ) : (
             <div className="neu-surface-base rounded-[var(--neu-radius-md)] p-10 text-center">
