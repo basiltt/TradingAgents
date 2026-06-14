@@ -408,6 +408,12 @@ def create_app() -> FastAPI:
             app.state.account_ws_manager = account_ws_mgr
             app.state.accounts_service = AccountsService(db=db, ws_manager=account_ws_mgr)
             account_ws_mgr.set_accounts_service(app.state.accounts_service)
+            # Performance analytics service — historical path is trades-derived (no Bybit),
+            # live overlay uses accounts_service.get_dashboard when available.
+            from backend.services.performance_service import PerformanceService
+            app.state.performance_service = PerformanceService(
+                db=db, accounts_service=app.state.accounts_service,
+            )
             app.state.scanner_service._accounts = app.state.accounts_service
             # ONE shared per-(account,symbol) lock registry across the AutoTrade
             # executor, the AI manager, and the close evaluator — so they can never
@@ -570,6 +576,13 @@ def create_app() -> FastAPI:
             app.state.cooloff_repo = None
             app.state.cooloff_classifier = None
             app.state.cooloff_sweep = None
+
+        # Performance analytics must work even without ACCOUNTS_ENCRYPTION_KEY (its
+        # historical path is trades-derived). Create it here if the keyed block above
+        # did not — without a live overlay (live metrics degrade to "—").
+        if not getattr(app.state, "performance_service", None):
+            from backend.services.performance_service import PerformanceService
+            app.state.performance_service = PerformanceService(db=db, accounts_service=None)
 
         # Regime classifier — always running, independent of accounts
         from backend.services.regime_classifier import RegimeClassifier
@@ -770,6 +783,7 @@ def create_app() -> FastAPI:
     from backend.routers.memory import router as memory_router
     from backend.routers.models import router as models_router
     from backend.routers.portfolio import router as portfolio_router
+    from backend.routers.performance import router as performance_router
     from backend.routers.scanner import router as scanner_router
     from backend.routers.scheduled_scans import router as scheduled_scans_router
     from backend.routers.signal_analytics import router as signal_analytics_router
@@ -781,6 +795,7 @@ def create_app() -> FastAPI:
     from backend.routers.ws_backtest import router as ws_backtest_router
 
     app.include_router(portfolio_router, prefix="/api/v1")
+    app.include_router(performance_router, prefix="/api/v1")
     app.include_router(analytics_router, prefix="/api/v1")
     app.include_router(strategies_router, prefix="/api/v1")
     app.include_router(config_router, prefix="/api/v1")
