@@ -1,13 +1,15 @@
 """Unit tests for PerformanceService pure computation (spec §3/§4.1)."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from backend.services.performance_service import (
     classify_trades, compute_pnl_kpis,
     compute_starting_equity, compute_cumulative_curve, compute_drawdown_series,
+    build_daily_return_series, compute_risk_ratios, resolve_timeframe_window,
+    compute_max_consecutive,
 )
 # IMPORTANT (TDD import hygiene): import ONLY the helpers each task has implemented so far.
 # A module-level import of a not-yet-defined name fails at pytest COLLECTION time (before
@@ -130,3 +132,87 @@ class TestDrawdownSeries:
         # absolute dollars under *_abs semantics; pct is None
         assert dd_max["max_drawdown_abs"] == pytest.approx(-10.0)
         assert dd_max["max_drawdown_pct"] is None
+
+
+class TestMaxConsecutive:
+    def test_per_trade_sequence_not_daily(self):
+        # 3 wins in a row then a loss -> max_consecutive_wins = 3
+        trades = [_t(1.0, None, _id=1), _t(2.0, None, _id=2), _t(3.0, None, _id=3),
+                  _t(-1.0, None, _id=4)]
+        w, l = compute_max_consecutive(trades)
+        assert w == 3
+        assert l == 1
+
+    def test_breakeven_breaks_streak(self):
+        trades = [_t(1.0, None, _id=1), _t(0.0, None, _id=2), _t(2.0, None, _id=3)]
+        w, _ = compute_max_consecutive(trades)
+        assert w == 1
+
+
+class TestDailyReturnSeries:
+    def test_forward_filled_calendar_days_first_seeded_at_D(self):
+        # trades on day1 (+10) and day3 (+5); day2 has no trade -> 0% return that day
+        D = 100.0
+        trades = [_t(10.0, datetime(2026, 5, 1, 8, tzinfo=timezone.utc), _id=1),
+                  _t(5.0, datetime(2026, 5, 3, 8, tzinfo=timezone.utc), _id=2)]
+        pairs = build_daily_return_series(trades, D=D)
+        # returns (date, return_pct) pairs; day1 +10%, day2 (no trade) 0%, day3 ~4.545%
+        assert len(pairs) == 3  # calendar-filled: 5/1, 5/2, 5/3
+        rets = [r for (_d, r) in pairs]
+        assert rets[0] == pytest.approx(10.0)
+        assert rets[1] == pytest.approx(0.0)
+        assert rets[2] == pytest.approx((115 - 110) / 110 * 100)
+
+
+class TestRiskRatios:
+    def test_null_below_10_trading_days(self):
+        # only 2 trading days -> ratios null
+        D = 100.0
+        trades = [_t(10.0, datetime(2026, 5, 1, 8, tzinfo=timezone.utc), _id=1),
+                  _t(5.0, datetime(2026, 5, 2, 8, tzinfo=timezone.utc), _id=2)]
+        r = compute_risk_ratios(trades, D=D, max_drawdown_pct=-4.2)
+        assert r["sharpe_ratio"] is None
+        assert r["sortino_ratio"] is None
+        assert r["calmar_ratio"] is None
+
+    def test_calmar_uses_abs_drawdown_positive(self):
+        # 11 distinct trading days, small positive returns, negative max_dd -> positive Calmar
+        D = 100.0
+        trades = [_t(1.0, datetime(2026, 5, d, 8, tzinfo=timezone.utc), _id=d)
+                  for d in range(1, 12)]
+        r = compute_risk_ratios(trades, D=D, max_drawdown_pct=-2.0)
+        assert r["calmar_ratio"] is not None
+        assert r["calmar_ratio"] > 0  # abs(max_dd) used
+
+    def test_d_null_all_ratios_null(self):
+        trades = [_t(1.0, datetime(2026, 5, d, 8, tzinfo=timezone.utc), _id=d)
+                  for d in range(1, 12)]
+        r = compute_risk_ratios(trades, D=None, max_drawdown_pct=None)
+        assert r == {"sharpe_ratio": None, "sortino_ratio": None, "calmar_ratio": None}
+
+
+class TestTimeframeWindow:
+    def test_all_has_no_lower_bound(self):
+        anchor = datetime(2026, 6, 14, 12, tzinfo=timezone.utc)
+        start, a = resolve_timeframe_window("ALL", anchor)
+        assert start is None
+        assert a == anchor
+
+    def test_1m_is_calendar_month(self):
+        anchor = datetime(2026, 6, 14, 12, tzinfo=timezone.utc)
+        start, _ = resolve_timeframe_window("1M", anchor)
+        assert start == datetime(2026, 5, 14, 12, tzinfo=timezone.utc)
+
+    def test_1d_is_trailing_24h(self):
+        anchor = datetime(2026, 6, 14, 12, tzinfo=timezone.utc)
+        start, _ = resolve_timeframe_window("1D", anchor)
+        assert start == anchor - timedelta(hours=24)
+
+    def test_ytd_is_jan1(self):
+        anchor = datetime(2026, 6, 14, 12, tzinfo=timezone.utc)
+        start, _ = resolve_timeframe_window("YTD", anchor)
+        assert start == datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    def test_unknown_raises(self):
+        with pytest.raises(ValueError):
+            resolve_timeframe_window("7H", datetime(2026, 6, 14, tzinfo=timezone.utc))

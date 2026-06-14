@@ -148,3 +148,126 @@ def compute_drawdown_series(
     if D is not None:
         return series, {"max_drawdown_pct": float(worst_pct), "max_drawdown_abs": None}
     return series, {"max_drawdown_pct": None, "max_drawdown_abs": float(worst_abs)}
+
+
+_MIN_TRADING_DAYS = 10
+
+
+def compute_max_consecutive(trades: list[dict]) -> tuple[int, int]:
+    """Longest win / loss streak over the PER-TRADE sequence (NOT the daily series).
+
+    Trades are already ordered closed_at,id. Reuses portfolio_stats.max_consecutive
+    by mapping each trade to +1 (win) / -1 (loss) / 0 (breakeven/null breaks streak).
+    """
+    seq = []
+    for t in trades:
+        v = t.get("net_pnl")
+        seq.append(1.0 if (v is not None and v > 0) else (-1.0 if (v is not None and v < 0) else 0.0))
+    wins = portfolio_stats.max_consecutive(seq, negative=False)
+    losses = portfolio_stats.max_consecutive(seq, negative=True)
+    return wins, losses
+
+
+def _trading_day_count(trades: list[dict]) -> int:
+    return len({t["closed_at"].date() for t in trades if t.get("closed_at") is not None})
+
+
+def build_daily_return_series(trades: list[dict], D: float) -> list[tuple[Any, float]]:
+    """Forward-filled UTC-calendar-day % return series for Sharpe/Sortino/Calmar.
+
+    Built over ALL of `trades` (origin 0). Day set = every UTC calendar day from first to
+    last trading day, inclusive. No-trade days carry equity forward -> 0% return. First day
+    seeded at D. Returns (date, return_pct) pairs so a caller can restrict to a window
+    WITHOUT re-seeding the window's first day (spec §4.1 step 5).
+    """
+    if not trades or D is None or D <= 0:
+        return []
+    by_day: dict[Any, Decimal] = {}
+    cum = Decimal(0)
+    for t in trades:
+        cum += _npl(t)
+        by_day[t["closed_at"].date()] = cum  # last write per day = end-of-day cum
+    days = sorted(by_day.keys())
+    first, last = days[0], days[-1]
+    base = Decimal(str(D))
+    out: list[tuple[Any, float]] = []
+    prev_proxy = base  # before first day
+    cur_cum = Decimal(0)
+    d = first
+    one = timedelta(days=1)
+    while d <= last:
+        if d in by_day:
+            cur_cum = by_day[d]
+        proxy = base + cur_cum
+        ret = float((proxy - prev_proxy) / prev_proxy * Decimal(100)) if prev_proxy > 0 else 0.0
+        out.append((d, ret))
+        prev_proxy = proxy
+        d = d + one
+    return out
+
+
+def compute_risk_ratios(
+    trades: list[dict], D: float | None, max_drawdown_pct: float | None,
+    window: "tuple[datetime | None, datetime] | None" = None,
+) -> dict[str, float | None]:
+    """Sharpe/Sortino/Calmar from the daily-% series; None below 10 trading days,
+    on D-null, or on degenerate (zero variance / zero drawdown). Calmar uses abs(dd).
+
+    `trades` is the ALL-HISTORY set; the all-history daily-% series is built once and then
+    restricted to days within `window` (spec §4.1 step 5 -- first in-window day keeps its
+    recurrence return, NOT a re-seed at D). When window is None, the whole series is used.
+    The <10 gate counts distinct TRADING days within the window.
+    """
+    nulls = {"sharpe_ratio": None, "sortino_ratio": None, "calmar_ratio": None}
+    if D is None or D <= 0:
+        return dict(nulls)
+    pairs = build_daily_return_series(trades, D)  # [(date, return_pct), ...] all-history
+    if window is not None:
+        start, end = window
+        sd = start.date() if start is not None else None
+        ed = end.date()
+        pairs = [(d, r) for (d, r) in pairs if (sd is None or d >= sd) and d < ed]
+    series = [r for (_d, r) in pairs]
+    win_trades = trades
+    if window is not None:
+        start, end = window
+        win_trades = [t for t in trades
+                      if (start is None or t["closed_at"] >= start) and t["closed_at"] < end]
+    if _trading_day_count(win_trades) < _MIN_TRADING_DAYS:
+        return dict(nulls)
+    if len(series) < 2:
+        return dict(nulls)
+    # zero-variance guard (helpers would return 0.0 -> we want None)
+    mean = sum(series) / len(series)
+    if all(abs(r - mean) < 1e-12 for r in series):
+        sharpe = sortino = None
+    else:
+        sharpe = portfolio_stats.calc_sharpe(series) or None  # 0.0 -> None
+        sortino = portfolio_stats.calc_sortino(series) or None
+    # Calmar: None on no-drawdown; also map a 0.0 result (zero mean return) -> None for parity.
+    calmar = None if max_drawdown_pct in (None, 0) else (portfolio_stats.calc_calmar(series, abs(max_drawdown_pct)) or None)
+    return {"sharpe_ratio": sharpe, "sortino_ratio": sortino, "calmar_ratio": calmar}
+
+
+_TF = {"1D", "1W", "1M", "3M", "YTD", "1Y", "ALL"}
+
+
+def resolve_timeframe_window(timeframe: str, anchor: datetime) -> tuple[datetime | None, datetime]:
+    """Resolve a timeframe token to [start, anchor) in UTC (spec §4.2). ALL -> start None."""
+    if timeframe not in _TF:
+        raise ValueError(f"unknown timeframe: {timeframe}")
+    if timeframe == "ALL":
+        return None, anchor
+    if timeframe == "1D":
+        return anchor - timedelta(hours=24), anchor
+    if timeframe == "1W":
+        return anchor - timedelta(days=7), anchor
+    if timeframe == "1M":
+        return anchor - relativedelta(months=1), anchor
+    if timeframe == "3M":
+        return anchor - relativedelta(months=3), anchor
+    if timeframe == "1Y":
+        return anchor - relativedelta(years=1), anchor
+    if timeframe == "YTD":
+        return datetime(anchor.year, 1, 1, tzinfo=timezone.utc), anchor
+    raise ValueError(timeframe)  # unreachable
