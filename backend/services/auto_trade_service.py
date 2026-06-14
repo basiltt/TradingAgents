@@ -90,6 +90,14 @@ class AutoTradeExecutor:
         self._cooloff_repo = cooloff_repo
         self._cooloff_classifier = cooloff_classifier
         self._state: Dict[str, _AccountState] = {}
+        # Phase 2: per-account execution merge slots, populated by each fan-out task
+        # at the end of its body and read post-join in deterministic _state order.
+        # Reset at the start of every fan-out (never read across phases).
+        self._merge_slots: Dict[str, List[TradeExecution]] = {}
+        # Phase 2 (HIGH-1): the merged executions a fan-out completed BEFORE a
+        # RateGateBanAbort/cancel propagated — drained by the orchestrator's _run_stage
+        # so orders that hit the exchange are persisted even on a mid-stage abort.
+        self._last_partial_merge: List[TradeExecution] = []
         # Per-scan MR caches; created lazily (annotation-only here, so getattr-based
         # lazy init still sees the attribute as absent until first use).
         self._mr_mean_cache: Dict[tuple[str, int, str], Optional[float]]
@@ -811,74 +819,431 @@ class AutoTradeExecutor:
             return executions
 
     async def execute_batch(self, results: List[Dict[str, Any]]) -> List[TradeExecution]:
-        """Execute all 'batch' mode configs against full results set (deduplicated by ticker)."""
-        async with self._lock:
-            # Deduplicate results by ticker — keep the latest (last in list)
-            seen: Dict[str, Dict[str, Any]] = {}
-            for r in results:
-                ticker = r.get("ticker", "")
-                if ticker:
-                    seen[ticker] = r
-            unique_results = sorted(
-                seen.values(),
-                key=lambda r: (abs(r.get("score", 0)), r.get("completed_at", "")),
-                reverse=True,
-            )
+        """Execute all 'batch' mode configs against full results set (deduplicated by ticker).
 
-            executions: List[TradeExecution] = []
-            traded: set = set()  # (account_id, symbol) pairs already traded
-            for state in self._state.values():
-                if state.config.get("execution_mode") != "batch":
-                    continue
-                account_id = state.config.get("account_id", "")
-                for result in unique_results:
-                    if state.stopped:
-                        break
-                    ticker = result.get("ticker", "")
-                    trade_key = (account_id, _to_symbol(ticker))
-                    if trade_key in traded:
-                        state.trades_skipped += 1
-                        continue
-                    execution = await self._try_trade(state, result, phase="batch")
-                    if execution and execution.status == "success":
-                        traded.add(trade_key)
-                    if execution:
-                        executions.append(execution)
+        Phase 2: the per-account work is fanned out under the process-wide account
+        concurrency semaphore (default width 1 => byte-identical to the old
+        sequential path). Partition unit = ``account_id``: one task owns ALL of an
+        account's ``_state`` entries and its OWN ``traded`` set + ``executions`` list,
+        so there is no shared mutable state between tasks (the cross-config dedup that
+        the shared ``traded`` set used to provide is per-account by construction —
+        ``traded`` is keyed ``(account_id, symbol)`` and ``_try_trade``'s
+        cross-config gates read only per-``_AccountState`` fields). Results are merged
+        AFTER the gather in deterministic ``self._state`` insertion order, read from
+        ``self._state`` (NOT the gather return values, which would be CancelledError
+        for a cancelled child)."""
+        # Deduplicate results by ticker — keep the latest (last in list). Shared,
+        # read-only across all per-account tasks (sorted best-|score|-first).
+        seen: Dict[str, Dict[str, Any]] = {}
+        for r in results:
+            ticker = r.get("ticker", "")
+            if ticker:
+                seen[ticker] = r
+        unique_results = sorted(
+            seen.values(),
+            key=lambda r: (abs(r.get("score", 0)), r.get("completed_at", "")),
+            reverse=True,
+        )
 
-            # Fill pass: backfill remaining max_trades slots from the next-best signals
-            # with relaxed filters (see _fill_to_max). Shared helper keeps batch /
-            # immediate / post_scan_recheck fill behavior identical.
-            batch_states = [s for s in self._state.values() if s.config.get("execution_mode") == "batch"]
-            await self._fill_to_max(batch_states, unique_results, traded, executions, phase="fill")
+        async def _run_account(account_id: str, states: List["_AccountState"], ordinal) -> None:
+            # Per-account-local dedup + execution buffer (single-writer-per-task).
+            # Publish the slot in a finally so a mid-account raise (RateGateBanAbort /
+            # cancel) still preserves orders that already hit the exchange (HIGH-1).
+            traded: set = set()
+            local_execs: List[TradeExecution] = []
+            self._merge_slots[account_id] = local_execs  # alias published up-front
+            try:
+                for state in states:
+                    for result in unique_results:
+                        if state.stopped:
+                            break
+                        ticker = result.get("ticker", "")
+                        trade_key = (account_id, _to_symbol(ticker))
+                        if trade_key in traded:
+                            state.trades_skipped += 1
+                            continue
+                        execution = await self._try_trade(state, result, phase="batch")
+                        if execution and execution.status == "success":
+                            traded.add(trade_key)
+                        if execution:
+                            local_execs.append(execution)
+                            # EC-1: per-symbol order row (carries acct_ordinal + symbol, never
+                            # a terminal STAGE status). Fail-open; loop-thread only.
+                            self._emit_progress(
+                                "batch", "", status=("placed" if execution.status == "success" else "failed"),
+                                phase="batch", account_id=account_id, acct_ordinal=ordinal,
+                                symbol=execution.symbol, side=execution.side,
+                            )
+                # Fill pass: backfill remaining max_trades slots from the next-best signals
+                # with relaxed filters (see _fill_to_max). Per-account so the shared helper
+                # keeps batch / immediate / post_scan_recheck fill behavior identical.
+                await self._fill_to_max(states, unique_results, traded, local_execs, phase="fill")
+            finally:
+                # Slot is the SAME list object aliased above; it already holds every
+                # placement appended so far. (Re-assign defensively in case a future edit
+                # rebinds local_execs.)
+                self._merge_slots[account_id] = local_execs
 
-            return executions
+        return await self._fan_out_by_account(unique_results, _run_account, mode="batch")
+
+
 
     async def fill_immediate_remaining(self, results: List[Dict[str, Any]]) -> List[TradeExecution]:
-        """For immediate-mode configs with fill_to_max_trades, backfill from all results after scan completes."""
-        async with self._lock:
-            seen: Dict[str, Dict[str, Any]] = {}
-            for r in results:
-                ticker = r.get("ticker", "")
-                if ticker:
-                    seen[ticker] = r
-            unique_results = list(seen.values())
+        """For immediate-mode configs with fill_to_max_trades, backfill from all results after scan completes.
 
-            executions: List[TradeExecution] = []
-            traded: set = set()  # (account_id, symbol) cross-config deduplication
+        Phase 2: partitioned per-account under the concurrency semaphore (default
+        width 1 => byte-identical). Each account seeds its OWN ``traded`` set from
+        its strict-pass executions and runs the shared ``_fill_to_max`` over its own
+        states — there is no cross-account shared state."""
+        seen: Dict[str, Dict[str, Any]] = {}
+        for r in results:
+            ticker = r.get("ticker", "")
+            if ticker:
+                seen[ticker] = r
+        unique_results = list(seen.values())
 
-            # Pre-populate traded set from strict-pass executions
-            for state in self._state.values():
-                if state.config.get("execution_mode") != "immediate":
-                    continue
-                aid = state.config.get("account_id", "")
+        async def _run_account(account_id: str, states: List["_AccountState"], ordinal) -> None:
+            traded: set = set()  # per-account (account_id, symbol) dedup
+            for state in states:
                 for e in state.executions:
                     if e.status == "success":
-                        traded.add((aid, e.symbol))
+                        traded.add((account_id, e.symbol))
+            local_execs: List[TradeExecution] = []
+            self._merge_slots[account_id] = local_execs  # publish up-front (HIGH-1)
+            try:
+                await self._fill_to_max(states, unique_results, traded, local_execs, phase="fill")
+            finally:
+                self._merge_slots[account_id] = local_execs
 
-            immediate_states = [s for s in self._state.values() if s.config.get("execution_mode") == "immediate"]
-            await self._fill_to_max(immediate_states, unique_results, traded, executions, phase="fill")
+        return await self._fan_out_by_account(unique_results, _run_account, mode="immediate")
 
-            return executions
+    # Canonical post-scan tail stage order + the single global pct emitted at each
+    # stage's DONE boundary (EC-2: pct is global, from the orchestrator, never
+    # per-account). init_balances already ran pre-scan; the tail is the 5 steps below.
+    # NOTE: summaries caps at 95 — only the terminal `complete` event reaches 100, so
+    # the UI never shows 100% before the final results are committed (FR-036). A client
+    # keying "done" off pct>=100 therefore can't race the post-commit terminal.
+    _TAIL_STAGE_DONE_PCT = {
+        "execute_batch": 20,
+        "fill": 40,
+        "post_scan_recheck": 60,
+        "cleanup": 80,
+        "summaries": 95,
+    }
+
+    async def run_post_scan_tail(
+        self,
+        results: List[Dict[str, Any]],
+        *,
+        persist_cb=None,
+        place_trades: bool = True,
+        emit_complete: bool = True,
+    ) -> Dict[str, Any]:
+        """Run the post-scan auto-trade tail as ONE orchestrated unit.
+
+        The single entry point shared by the scheduled tail (scanner_service), the
+        manual re-run (routers/scanner) and the resume path, so all three behave
+        identically. Sequence (init_balances already ran pre-scan):
+
+            execute_batch -> fill_immediate_remaining -> post_scan_recheck
+            -> cleanup_unused_rules -> get_summaries
+
+        ``place_trades`` gates ONLY the three order-placing stages (batch/fill/
+        recheck). The auto path passes ``place_trades=False`` when the scan errored,
+        was cancelled, or had too-many-failures — in which case cleanup + summaries
+        still run (mirroring the prior behavior where those ran unconditionally for
+        any constructed executor while the trade stages were guarded).
+
+        Stage-level progress (active/done) is emitted ONLY here, AFTER each stage's
+        per-account work has joined (EC-1: a per-account emit never carries a terminal
+        STAGE status, so the stepper can't flip to "done" when the first account
+        finishes). ``pct`` is a single global value keyed off the stage (EC-2).
+
+        ``persist_cb(stage, executions)`` (optional, async) is invoked once per
+        execution-producing stage so the caller can persist incrementally
+        (replace-by-stage). It is fail-open: a raising persist_cb is logged and the
+        tail continues (a persistence hiccup must not abort live trading). Returns
+        ``{"executions": [...all stages...], "summaries": [...]}``.
+
+        Fail-open: the progress sink and persist_cb never affect trade execution. A
+        ``RateGateBanAbort`` (order lane banned) or any per-stage error is caught and
+        logged PER STAGE — the next stage still runs — exactly mirroring the prior
+        per-stage try/except at both call sites (so behavior is unchanged on a ban).
+        """
+        from backend.services.bybit_rate_gate import RateGateBanAbort
+
+        all_executions: List[TradeExecution] = []
+
+        async def _persist(stage: str, execs: List[TradeExecution]) -> None:
+            if persist_cb is None or not execs:
+                return
+            try:
+                await persist_cb(stage, execs)
+            except Exception as e:  # fail-open: persistence must not abort the tail
+                logger.warning("post_scan_tail_persist_failed", extra={
+                    "stage": stage, "scan_id": self._scan_id, "error": str(e)[:200],
+                })
+
+        async def _run_stage(stage: str, coro_factory):
+            """Run one execution-producing stage with per-stage ban/error isolation
+            (matches the prior call-site behavior: a ban/error in one stage is logged
+            and the next stage proceeds). Returns the stage's executions.
+
+            On a RateGateBanAbort/cancel mid-stage, the partition has already MERGED the
+            placements that completed before the abort onto `self._last_partial_merge`
+            (HIGH-1) — drain + persist them so orders that hit the exchange are still
+            recorded in auto_trade_results, then return them (the stage still 'happened'
+            for the accounts that completed)."""
+            # MUST reset before each stage — a stale value would let this stage's abort
+            # handler drain (and double-persist) the PRIOR stage's merged placements.
+            self._last_partial_merge = []
+            try:
+                execs = await coro_factory()
+            except RateGateBanAbort:
+                partial = list(self._last_partial_merge)
+                logger.warning("post_scan_tail_stage_rate_ban", extra={
+                    "stage": stage, "scan_id": self._scan_id, "partial_count": len(partial)})
+                all_executions.extend(partial)
+                await _persist(stage, partial)
+                return partial
+            except asyncio.CancelledError:
+                # Persist what completed before the cancel, then re-raise so the tail
+                # stops cleanly (cooperative cancellation propagates to the caller).
+                partial = list(self._last_partial_merge)
+                if partial:
+                    all_executions.extend(partial)
+                    await _persist(stage, partial)
+                raise
+            except Exception as e:
+                partial = list(self._last_partial_merge)
+                logger.warning("post_scan_tail_stage_error", extra={
+                    "stage": stage, "scan_id": self._scan_id, "error": str(e)[:200],
+                    "partial_count": len(partial)})
+                all_executions.extend(partial)
+                await _persist(stage, partial)
+                return partial
+            all_executions.extend(execs)
+            await _persist(stage, execs)
+            return execs
+
+        # --- stages 1-3 place orders; gated by place_trades (auto path skips them on
+        # scan_error / cancelled / too_many_failures, but still runs cleanup+summaries). ---
+        if place_trades:
+            # --- stage 1: batch strict + fill ---
+            self._emit_progress("execute_batch", "Placing batch orders", status="active")
+            batch_execs = await _run_stage("execute_batch", lambda: self.execute_batch(results))
+            self._emit_stage_done("execute_batch", batch_execs)
+
+            # --- stage 2: immediate fill-to-max ---
+            self._emit_progress("fill", "Filling remaining slots", status="active")
+            fill_execs = await _run_stage("fill", lambda: self.fill_immediate_remaining(results))
+            self._emit_stage_done("fill", fill_execs)
+
+            # --- stage 3: post-scan recheck (rescue accounts that cleared mid-scan) ---
+            self._emit_progress("post_scan_recheck", "Re-checking accounts", status="active")
+            recheck_execs = await _run_stage("post_scan_recheck", lambda: self.post_scan_recheck(results))
+            self._emit_stage_done("post_scan_recheck", recheck_execs)
+
+        # --- stage 4: cleanup unused close rules ---
+        self._emit_progress("cleanup", "Cleaning up rules", status="active")
+        try:
+            await self.cleanup_unused_rules()
+        except Exception as e:
+            logger.warning("post_scan_tail_cleanup_failed", extra={
+                "scan_id": self._scan_id, "error": str(e)[:200]})
+        self._emit_progress("cleanup", "", status="done",
+                            pct=self._TAIL_STAGE_DONE_PCT["cleanup"])
+
+        # --- stage 5: per-account summaries ---
+        summaries = self.get_summaries()
+        self._emit_progress("summaries", "", status="done",
+                            pct=self._TAIL_STAGE_DONE_PCT["summaries"])
+
+        # Terminal event: FR-036 requires the FINAL results to be committed to the DB
+        # BEFORE the terminal "complete" event reaches the client (else a client that
+        # refetches on the terminal event races the commit). When ``emit_complete`` is
+        # True (manual/test paths that persist inside the tail or don't need the
+        # ordering), emit it here. When False, the call-site emits it via
+        # ``emit_tail_complete()`` AFTER its final ``update_scan`` commit.
+        if emit_complete:
+            self.emit_tail_complete()
+        return {"executions": all_executions, "summaries": summaries}
+
+    def emit_tail_complete(self) -> None:
+        """Emit the terminal ``complete`` progress event. Call AFTER the final results
+        are committed (FR-036). Fail-open / idempotent-safe to call once."""
+        self._emit_progress("complete", "Auto-trade complete", status="done", pct=100)
+
+    def _emit_stage_done(self, stage: str, execs: List[TradeExecution]) -> None:
+        """Emit a stage DONE with the global pct + cumulative counters (EC-1/EC-2).
+        Stage status is single-writer-post-join here in the orchestrator."""
+        placed = sum(1 for e in execs if e.status == "success")
+        failed = sum(1 for e in execs if e.status != "success")
+        self._emit_progress(
+            stage, "", status="done",
+            pct=self._TAIL_STAGE_DONE_PCT.get(stage),
+            trades_executed=placed, trades_failed=failed,
+        )
+
+    async def _fan_out_by_account(
+        self,
+        unique_results: List[Dict[str, Any]],
+        run_account,
+        *,
+        mode: str,
+    ) -> List[TradeExecution]:
+        """Partition the configured states by ``account_id`` and run ``run_account``
+        for each account concurrently under the process-wide account-concurrency
+        semaphore (default width 1 => strictly sequential, byte-identical to the old
+        single-lock body).
+
+        ``run_account(account_id, states)`` owns ALL of that account's ``_state``
+        entries and must publish its executions into ``self._merge_slots[account_id]``
+        before returning. Results are merged AFTER the gather, read from
+        ``self._merge_slots`` in deterministic ``self._state`` insertion order — NOT
+        from the gather return values (a cancelled child resolves to CancelledError;
+        FR-035/R170). A task that raises is isolated: its slot is absent/partial and
+        the other accounts still complete (``return_exceptions=True``).
+
+        ``mode`` selects which configs participate: "batch" -> execution_mode=="batch";
+        "immediate" -> execution_mode=="immediate".
+
+        Concurrency model: the whole fan-out runs under ``self._lock`` (held once for
+        the duration), exactly as the old single-lock ``execute_batch`` body did. The
+        per-account tasks run concurrently WITHIN that held lock — they never acquire
+        ``self._lock`` themselves — so an external mutator of ``self._state``
+        (``refresh_configs`` / ``sync_active_close_rules_from_config`` /
+        ``post_scan_recheck``, all of which acquire ``self._lock``) stays excluded
+        from the fan-out just as before, while account-level parallelism is preserved.
+        Lock order: ``self._lock`` (executor) -> account-sem -> position-lock.
+        """
+        from backend.services import post_scan_concurrency as _psc
+
+        async with self._lock:
+            # Group states by account in _state insertion order (deterministic merge).
+            by_account: Dict[str, List["_AccountState"]] = {}
+            for state in self._state.values():
+                if state.config.get("execution_mode") != mode:
+                    continue
+                aid = state.config.get("account_id", "")
+                if not aid:
+                    continue
+                by_account.setdefault(aid, []).append(state)
+
+            if not by_account:
+                return []
+
+            # Reset only the slots for the accounts we are about to run (never carry a
+            # prior phase's executions into this merge).
+            for aid in by_account:
+                self._merge_slots.pop(aid, None)
+
+            # EC-3: compute the canonical ordinal map ONCE pre-fan-out (passed to emits).
+            ordinals = self._acct_ordinal_map()
+            sem = _psc.get_account_semaphore()
+
+            # Map account_id -> its first state, to read final per-account counters for
+            # the post-task account-row emit (counters live on _AccountState).
+            first_state = {aid: states[0] for aid, states in by_account.items()}
+
+            async def _guarded(account_id: str, states: List["_AccountState"]) -> None:
+                ordinal = ordinals.get(account_id)
+                async with sem:
+                    # EC-1: per-account "active" carries acct_ordinal + the stage name as
+                    # `phase`, but NEVER a terminal STAGE status — the orchestrator owns
+                    # stage active/done. Status here describes the ACCOUNT row.
+                    self._emit_progress(
+                        mode, "", status="active", phase=mode,
+                        account_id=account_id, acct_ordinal=ordinal,
+                    )
+                    await run_account(account_id, states, ordinal)
+                    # Per-account completion row with authoritative cumulative counters.
+                    st = first_state.get(account_id)
+                    self._emit_progress(
+                        mode, "", status="done", phase=mode,
+                        account_id=account_id, acct_ordinal=ordinal,
+                        trades_executed=self._account_trades(account_id, "executed"),
+                        trades_failed=self._account_trades(account_id, "failed"),
+                        trades_skipped=self._account_trades(account_id, "skipped"),
+                        reason_code=(st.stopped_reason if st else None),
+                    )
+
+            tasks = [
+                asyncio.create_task(_guarded(aid, states))
+                for aid, states in by_account.items()
+            ]
+            results_or_excs = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Merge FIRST (before any re-raise) in deterministic _state insertion order,
+            # reading from the per-account slots — NOT the gather return values. A task
+            # that raised mid-flight still published whatever it placed (the run_account
+            # closures write their slot in a finally), so orders that hit the exchange
+            # are NEVER dropped from the merged result even when another account bans or
+            # the tail is cancelled (HIGH-1: placed-but-unpersisted orders are a money-
+            # accounting bug).
+            merged: List[TradeExecution] = []
+            for aid in by_account:
+                merged.extend(self._merge_slots.get(aid, []))
+
+            # Now surface per-account failures. A RateGateBanAbort (order lane banned)
+            # or a CancelledError must still propagate so the caller's ban/cancel
+            # handling runs — but ONLY AFTER the merge above, so the caller can persist
+            # the surviving placements via the `merged` list it already received from a
+            # completed stage (the orchestrator's _run_stage persists per stage; on a
+            # re-raise the partial `merged` is lost to that stage's return, so we stash
+            # it on the executor for the caller to drain — see _last_partial_merge).
+            self._last_partial_merge = merged
+            # Distinguish a REAL outer cancellation (the parent task is being cancelled
+            # → we must honor it and re-raise) from a STRAY captured child CancelledError
+            # (one child was cancelled individually while the parent is healthy → must
+            # NOT cancel the whole tail / skip the caller's finalization+DB-commit). On
+            # a real outer cancel, gather() itself re-raises before we get here; a
+            # CancelledError appearing as a captured RESULT is therefore a stray child
+            # one — log it like any other failure (its placements are already merged).
+            cur = asyncio.current_task()
+            outer_cancelling = bool(cur is not None and cur.cancelling())
+            for aid, outcome in zip(by_account.keys(), results_or_excs):
+                if isinstance(outcome, BaseException):
+                    from backend.services.bybit_rate_gate import RateGateBanAbort
+                    if isinstance(outcome, RateGateBanAbort):
+                        # Order lane banned — propagate so the caller's ban handling runs
+                        # (the surviving merged placements are stashed above for drain).
+                        raise outcome
+                    if isinstance(outcome, asyncio.CancelledError):
+                        if outer_cancelling:
+                            raise outcome  # honor a genuine outer cancellation
+                        # Stray per-child cancel: don't tear down the healthy tail.
+                        logger.warning("auto_trade_account_task_cancelled", extra={
+                            "account_id": aid, "mode": mode})
+                        continue
+                    logger.warning("auto_trade_account_task_failed", extra={
+                        "account_id": aid, "mode": mode, "error": str(outcome)[:200],
+                    })
+
+            return merged
+
+
+    def _account_trades(self, account_id: str, kind: str) -> int:
+        """Sum a per-account counter across ALL of an account's configs/states.
+        ``kind`` in {"executed","failed","skipped"}.
+
+        Used by the LIVE per-account progress row, which is a per-ACCOUNT aggregate
+        keyed by acct_ordinal. NOTE: the terminal ``get_summaries()`` returns one row
+        per CONFIG/state (each carrying that account's ordinal), so for a multi-config
+        account the single live aggregate row equals the SUM of the terminal rows for
+        that ordinal — not any single terminal row. For the common single-config
+        account they are identical. The UI reconciles the live ordinal row against the
+        sum of terminal rows sharing that ordinal."""
+        attr = {
+            "executed": "trades_executed",
+            "failed": "trades_failed",
+            "skipped": "trades_skipped",
+        }[kind]
+        return sum(
+            getattr(s, attr, 0)
+            for s in self._state.values()
+            if s.config.get("account_id", "") == account_id
+        )
 
     def _acct_ordinal_map(self) -> Dict[str, int]:
         """Canonical, refresh-STABLE per-scan ordinal for each distinct account_id
@@ -929,15 +1294,30 @@ class AutoTradeExecutor:
         # at every scan finalize when tracing is off.
         if rec is None or ctx is None or getattr(ctx, "run_id", None) is None:
             return len(seen_accounts)
-        label_cache: Dict[str, Optional[str]] = {}
-        for state in self._state.values():
-            aid = state.config.get("account_id", "")
-            if aid and aid not in label_cache:
+        # Prefetch the distinct account labels concurrently under the account
+        # semaphore (default width 1 => the original sequential lookups), THEN emit the
+        # per-state traces in the original deterministic order — the debug forensic
+        # record is order-sensitive, so only the I/O (get_account) is parallelized, not
+        # the emit sequence.
+        from backend.services import post_scan_concurrency as _psc
+        sem = _psc.get_account_semaphore()
+        distinct_ids = [aid for aid in {s.config.get("account_id", "") for s in self._state.values()} if aid]
+
+        async def _fetch_label(aid: str):
+            async with sem:
                 try:
                     acct = await self._accounts.get_account(aid)
-                    label_cache[aid] = (acct or {}).get("label")
+                    return aid, (acct or {}).get("label")
                 except Exception:
-                    label_cache[aid] = None
+                    return aid, None
+
+        fetched = await asyncio.gather(*(_fetch_label(aid) for aid in distinct_ids), return_exceptions=True)
+        label_cache: Dict[str, Optional[str]] = {}
+        for item in fetched:
+            if isinstance(item, tuple):
+                label_cache[item[0]] = item[1]
+        for state in self._state.values():
+            aid = state.config.get("account_id", "")
             rec.emit_account_trace(
                 ctx, account_id=aid,
                 account_label=label_cache.get(aid),
@@ -982,15 +1362,27 @@ class AutoTradeExecutor:
                 if rid:
                     account_rules[aid].add(rid)
 
-        # Delete rules only for accounts with zero total trades
-        for aid, has_trades in account_has_trades.items():
-            if has_trades:
-                continue
-            for rule_id in account_rules.get(aid, set()):
-                try:
-                    await self._close_svc.delete_rule(aid, rule_id)
-                except Exception:
-                    pass
+        # Delete rules only for accounts with zero total trades. Parallelize per
+        # account under the account-concurrency semaphore (default width 1 => the
+        # original sequential order). Each account's deletes are independent of any
+        # other account's; a failure is swallowed per-rule exactly as before.
+        from backend.services import post_scan_concurrency as _psc
+        sem = _psc.get_account_semaphore()
+        zero_trade_accounts = [aid for aid, has in account_has_trades.items() if not has]
+
+        async def _cleanup_account(aid: str) -> None:
+            async with sem:
+                for rule_id in account_rules.get(aid, set()):
+                    try:
+                        await self._close_svc.delete_rule(aid, rule_id)
+                    except Exception:
+                        pass
+
+        if zero_trade_accounts:
+            await asyncio.gather(
+                *(_cleanup_account(aid) for aid in zero_trade_accounts),
+                return_exceptions=True,
+            )
 
     async def post_scan_recheck(self, results: List[Dict[str, Any]]) -> List[TradeExecution]:
         """Re-check accounts at end of scan for conditions that may have changed during the 2+ hour scan.
@@ -1044,8 +1436,20 @@ class AutoTradeExecutor:
         if not accounts_to_recheck:
             return executions
 
-        # Process each account outside the lock (network I/O)
-        for account_id, states in accounts_to_recheck.items():
+        # Process each account outside the lock (network I/O). Phase 2: each account
+        # is an independent task under the account-concurrency semaphore (default
+        # width 1 => the original sequential order). Each task owns a LOCAL executions
+        # list; results are merged in accounts_to_recheck insertion order after the
+        # gather (deterministic, width-invariant). The internal `async with self._lock`
+        # critical sections still serialize state mutations across tasks.
+        from backend.services import post_scan_concurrency as _psc
+        sem = _psc.get_account_semaphore()
+        recheck_slots: Dict[str, List[TradeExecution]] = {}
+
+        async def _recheck_account(account_id: str, states: List["_AccountState"]) -> None:
+          async with sem:
+            executions: List[TradeExecution] = []
+            recheck_slots[account_id] = executions
             try:
                 # Check current positions
                 positions = await self._accounts.get_positions(account_id)
@@ -1103,7 +1507,7 @@ class AutoTradeExecutor:
                 # If account still has positions and wasn't force-closed, skip
                 if has_positions and not force_closed:
                     self._emit_life(account_id, "post_scan_recheck", "recheck_positions_still_open")
-                    continue
+                    return
 
                 # Account is now clear — reset states and place trades
                 logger.info("post_scan_recheck_trading", extra={
@@ -1117,10 +1521,10 @@ class AutoTradeExecutor:
                     balance_str = wallet.get("totalAvailableBalance") or wallet.get("totalWalletBalance") or "0"
                     new_balance = float(balance_str)
                 except Exception:
-                    continue
+                    return
 
                 if new_balance <= 0:
-                    continue
+                    return
 
                 # Check for AI PAUSE_TRADING rule before deleting rules
                 paused = await self._is_account_paused(account_id)
@@ -1129,7 +1533,7 @@ class AutoTradeExecutor:
                         for state in states:
                             state.stopped = True
                             state.stopped_reason = "ai_paused_trading"
-                    continue
+                    return
 
                 # Check for Cool Off Time pause (mirror the PAUSE block — set all states +
                 # continue BEFORE the reset block below, or the reset clears stopped). DP2.
@@ -1138,7 +1542,7 @@ class AutoTradeExecutor:
                         for state in states:
                             state.stopped = True
                             state.stopped_reason = "cooloff_active"
-                    continue
+                    return
 
                 # Delete old rules and create fresh ones
                 if self._close_svc:
@@ -1322,6 +1726,32 @@ class AutoTradeExecutor:
                     "account_id": account_id, "error": str(e)[:200],
                 })
 
+        tasks = [
+            asyncio.create_task(_recheck_account(aid, states))
+            for aid, states in accounts_to_recheck.items()
+        ]
+        try:
+            outcomes = await asyncio.gather(*tasks, return_exceptions=True)
+        finally:
+            # Merge in deterministic accounts_to_recheck insertion order (NOT gather
+            # return values — read from the per-account slots; a cancelled child leaves
+            # a partial/absent slot but never corrupts another account's results). The
+            # merge runs in a `finally` so that even a genuine outer CancelledError
+            # (gather re-raises it) still captures the recheck placements that completed
+            # before the cancel onto `_last_partial_merge` — the orchestrator's
+            # _run_stage drains+persists it, so recheck orders that hit the exchange are
+            # never lost from auto_trade_results (parity with batch/fill, HIGH-1).
+            for aid in accounts_to_recheck:
+                executions.extend(recheck_slots.get(aid, []))
+            self._last_partial_merge = list(executions)
+        # Parity with batch/fill: a RateGateBanAbort (order lane banned) is a
+        # BaseException that escapes the per-account `except Exception`, so it surfaces
+        # here as a captured gather outcome. Re-raise it (AFTER the merge above preserved
+        # the partials) so the orchestrator logs the ban consistently.
+        from backend.services.bybit_rate_gate import RateGateBanAbort
+        for outcome in outcomes:
+            if isinstance(outcome, RateGateBanAbort):
+                raise outcome
         return executions
 
     async def _fill_to_max(self, states, unique_results, traded, executions, *, phase):
@@ -1336,14 +1766,17 @@ class AutoTradeExecutor:
         Dedup is keyed on the USDT symbol (via _to_symbol) consistently across passes —
         the strict passes that seed ``traded`` must use the same key space.
 
-        ``states`` is the list of _AccountState to fill (one per scan for execute_batch /
-        fill_immediate_remaining; the per-account config list for post_scan_recheck). The
-        caller is responsible for holding self._lock.
+        ``states`` is the list of _AccountState to fill (one ACCOUNT's states for the
+        partitioned execute_batch / fill_immediate_remaining fan-out tasks; the
+        per-account config list for post_scan_recheck).
+
+        Single-writer invariant: the caller must guarantee these ``states`` and their
+        ``traded`` set are not concurrently mutated by another task. Phase 2 satisfies
+        this two ways — the partitioned batch/fill fan-out gives each account its OWN
+        task (one writer per account), and post_scan_recheck holds ``self._lock``
+        across its strict+fill block. Either is sufficient; there is no cross-account
+        shared mutable state here (``traded`` is per call, counters are per state).
         """
-        # Precondition: the caller must already hold the executor lock — the shared
-        # ``traded`` set and per-state counters mutated below are only safe under it.
-        # Cheap assert to catch a future call site that forgets (would corrupt dedup).
-        assert self._lock.locked(), "_fill_to_max must be called while holding self._lock"
         for state in states:
             if not state.config.get("fill_to_max_trades"):
                 continue

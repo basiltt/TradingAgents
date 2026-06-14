@@ -293,6 +293,18 @@ def create_app() -> FastAPI:
         except Exception:
             logger.warning("post_scan_flags_refresher_init_failed", exc_info=True)
 
+        # ── Post-scan optimization: account-concurrency width (Phase 2) ──────────
+        # Default 1 => the parallel tail path is byte-identical to the old sequential
+        # path. width>1 is an operator opt-in (env POST_SCAN_ACCOUNT_CONCURRENCY),
+        # FR-049-clamped. Fail-open: a bad value degrades to the safe sequential path.
+        try:
+            from backend.services import post_scan_concurrency
+            _width_raw = os.environ.get("POST_SCAN_ACCOUNT_CONCURRENCY", "1")
+            _eff = post_scan_concurrency.configure_account_concurrency(_width_raw)
+            logger.info("post_scan_account_concurrency_configured", extra={"width": _eff})
+        except Exception:
+            logger.warning("post_scan_account_concurrency_init_failed", exc_info=True)
+
         # Debug tracing is an OPTIONAL forensics feature. Its router (503 when
         # absent) and the scanner (`if self._debug_recorder is not None`) are both
         # designed to tolerate a missing recorder, so a failure here must NEVER abort

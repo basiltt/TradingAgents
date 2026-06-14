@@ -138,18 +138,27 @@ export function useScanAutoTradeProgressWS(
       if (ev.scan_id && ev.scan_id !== currentScanId.current) return;
 
       // Step coalesce (latest per stage; a "done" is not overwritten by "active").
-      const sm = byStage.current;
-      const existing = sm.get(ev.stage);
-      const status =
-        existing?.status === "done" && ev.status === "active"
-          ? existing.status
-          : ev.status;
-      sm.set(ev.stage, {
-        stage: ev.stage,
-        status,
-        pct: ev.pct,
-      });
-      setSteps(Array.from(sm.values()));
+      // ONLY pure stage events drive the stepper — a per-account / per-symbol event
+      // (carries acct_ordinal or symbol) reuses the stage key as a label channel and
+      // must NOT register as a step, else phantom "batch"/"immediate" steps appear and
+      // a per-symbol "failed" would flip a stage row to failed.
+      const isStageEvent =
+        ev.acct_ordinal === null || ev.acct_ordinal === undefined;
+      const isOrderEvent = ev.symbol !== null && ev.symbol !== undefined;
+      if (isStageEvent && !isOrderEvent) {
+        const sm = byStage.current;
+        const existing = sm.get(ev.stage);
+        const status =
+          existing?.status === "done" && ev.status === "active"
+            ? existing.status
+            : ev.status;
+        sm.set(ev.stage, {
+          stage: ev.stage,
+          status,
+          pct: ev.pct,
+        });
+        setSteps(Array.from(sm.values()));
+      }
 
       if (typeof ev.pct === "number") {
         setPct((prev) => (prev === null ? ev.pct : Math.max(prev, ev.pct!)));

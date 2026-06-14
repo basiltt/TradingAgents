@@ -415,14 +415,43 @@ class AccountsService:
             "mark_price": str(mark_price), "tp": tp_price_str, "sl": sl_price_str, "leverage": leverage,
         })
 
+        # FR-004a / TASK-2.5: shield the exchange order submission so a cancellation
+        # landing mid-flight (scan cancel / shutdown drain) cannot abandon the order in
+        # an unknown state. The order carries TP/SL INLINE (take_profit/stop_loss), so a
+        # completed submission yields a fully protected position. We hold the inner task
+        # explicitly so that if OUR await is cancelled, the order still completes (shield)
+        # AND we can recover its result to log a structured orphan_order alert — a bare
+        # `await asyncio.shield(...)` would raise CancelledError (a BaseException) past the
+        # `except Exception` below, skipping the trade-row write + orphan log exactly when
+        # the alert is most valuable (the submission is the long network call → the likely
+        # cancel point).
+        _submit_task = asyncio.ensure_future(client.place_market_order(
+            symbol=symbol,
+            side=side,
+            qty=str(qty_rounded),
+            take_profit=tp_price_str,
+            stop_loss=sl_price_str,
+        ))
         try:
-            result = await client.place_market_order(
-                symbol=symbol,
-                side=side,
-                qty=str(qty_rounded),
-                take_profit=tp_price_str,
-                stop_loss=sl_price_str,
-            )
+            result = await asyncio.shield(_submit_task)
+        except asyncio.CancelledError:
+            # Our await was cancelled. The shielded submit keeps running; drain it so the
+            # order's fate is known, then log an orphan (the position, if opened, is
+            # protected by inline TP/SL; the reconciler will surface it) and re-raise to
+            # honor the cancellation.
+            try:
+                _done = await asyncio.shield(_submit_task)
+                _oid = (_done or {}).get("orderId", "") if isinstance(_done, dict) else ""
+            except Exception:
+                _oid = ""
+            logger.error("orphan_order", extra={
+                "severity": "high",
+                "account_id": account_id, "symbol": symbol, "side": side,
+                "order_id": _oid, "qty": str(qty_rounded),
+                "take_profit_price": tp_price_str, "stop_loss_price": sl_price_str,
+                "reason": "cancelled_during_order_submission",
+            })
+            raise
         except Exception:
             logger.error("place_trade_exchange_failed", extra={
                 "account_id": account_id, "symbol": symbol, "side": side, "qty": str(qty_rounded),
@@ -479,11 +508,33 @@ class AccountsService:
                     self._trade_service.invalidate_stats_cache(account_id)
                     if trade_record:
                         await self._trade_service._broadcast_trade_event("trade.opened", trade_record)
-            except Exception:
+            except (Exception, asyncio.CancelledError) as _row_exc:
+                # FR-038 / TASK-2.8: the exchange order ALREADY placed (above) but the
+                # trade-row write failed (e.g. a DB pool-acquire/command timeout, OR a
+                # CancelledError from a scan-cancel / shutdown drain landing on the DB
+                # await). The position itself is protected by the INLINE TP/SL submitted
+                # with the order, so it is not unsafe — but the trades table now lacks a
+                # row for it. Emit a structured HIGH-severity orphan_order record so the
+                # EXISTING position_reconciler orphan-detection alert surfaces it for
+                # manual reconciliation (it DETECTS + ALERTS, never auto-adopts —
+                # AC-FIX-1). We catch CancelledError too (it is a BaseException, so a
+                # bare `except Exception` would miss it — exactly when the orphan alert
+                # is most valuable), log the orphan, then RE-RAISE so cooperative
+                # cancellation still propagates.
+                logger.error("orphan_order", extra={
+                    "severity": "high",
+                    "account_id": account_id, "symbol": symbol, "side": side,
+                    "order_id": result.get("orderId", ""),
+                    "qty": str(qty_rounded),
+                    "take_profit_price": tp_price_str, "stop_loss_price": sl_price_str,
+                    "reason": "trade_row_write_failed_after_order_placed",
+                })
                 logger.exception("trade_record_creation_failed", extra={
                     "account_id": account_id, "symbol": symbol, "side": side,
                     "order_id": result.get("orderId", ""),
                 })
+                if isinstance(_row_exc, asyncio.CancelledError):
+                    raise
 
         elapsed_ms = (time.monotonic() - t0) * 1000
         logger.info("place_trade_done", extra={
