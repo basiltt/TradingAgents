@@ -74,11 +74,17 @@ class TradeExecution:
 class AutoTradeExecutor:
     """Evaluates scan results against auto-trade configs and executes trades."""
 
-    def __init__(self, accounts_service: Any, close_positions_service: Any = None, ai_manager_service: Any = None, sector_service: Any = None, *, recorder: Any = None, debug_ctx: Any = None, position_lock_registry: Any = None, cooloff_repo: Any = None, cooloff_classifier: Any = None):
+    def __init__(self, accounts_service: Any, close_positions_service: Any = None, ai_manager_service: Any = None, sector_service: Any = None, *, recorder: Any = None, debug_ctx: Any = None, position_lock_registry: Any = None, cooloff_repo: Any = None, cooloff_classifier: Any = None, progress: Any = None, scan_id: Any = None):
         self._accounts = accounts_service
         self._close_svc = close_positions_service
         self._ai_manager_service = ai_manager_service
         self._sector_service = sector_service
+        # Live post-scan progress sink (ScanProgressManager) + scan_id. Optional and
+        # None-guarded: the backtest path and tests build neither, so every emit is a
+        # no-op there. Progress is best-effort and must NEVER block or break trade
+        # execution (fail-open) — see _emit_progress.
+        self._progress = progress
+        self._scan_id = scan_id
         # Cool Off Time: None-guarded (like _close_svc). Backtest builds neither, so the
         # gate + pre-pass are inert there.
         self._cooloff_repo = cooloff_repo
@@ -155,6 +161,18 @@ class AutoTradeExecutor:
         if rec is None or ctx is None:
             return
         rec.emit_lifecycle(ctx, account_id=account_id, phase=phase, event_type=event_type, detail=detail or {})
+
+    def _emit_progress(self, stage: str, label: str = "", **fields: Any) -> None:
+        """Fail-open live-progress emit to the ScanProgressManager. Never raises,
+        never blocks — progress is best-effort and must not affect trade execution.
+        No-op when no progress sink / scan_id was injected (backtest, tests)."""
+        prog, sid = self._progress, self._scan_id
+        if prog is None or sid is None:
+            return
+        try:
+            prog.emit(sid, stage, label, **fields)
+        except Exception:
+            pass
 
     def _emit_snapshot(self, account_id: str, gate: str, positions, wallet=None, equity=None) -> None:
         rec, ctx = self._recorder, self._debug_ctx

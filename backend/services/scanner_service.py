@@ -350,6 +350,9 @@ class ScannerService:
         self._sector_service = sector_service
         self._debug_recorder = debug_recorder
         self._kline_cache = kline_cache  # for Regime Multi-Strategy BTC/MR-mean fetches
+        # Live post-scan progress manager (ScanProgressManager); stamped by main.py.
+        # Optional / None-safe — when absent (tests, backtest) progress emits no-op.
+        self._scan_progress = None
         self._scans: Dict[str, Dict[str, Any]] = {}
         self._lock = asyncio.Lock()
 
@@ -708,6 +711,7 @@ class ScannerService:
                 position_lock_registry=getattr(self, "_position_lock_registry", None),
                 cooloff_repo=self._resolve_cooloff_repo(),
                 cooloff_classifier=self._resolve_cooloff_classifier(),
+                progress=self._scan_progress, scan_id=scan_id,
             )
             # ── Regime Multi-Strategy: build the scan-time ScanContext ──
             # Kill-switch is read UNCONDITIONALLY (R3-F1) so master/per-feature kills
@@ -1040,6 +1044,7 @@ class ScannerService:
                     position_lock_registry=getattr(self, "_position_lock_registry", None),
                     cooloff_repo=self._resolve_cooloff_repo(),
                     cooloff_classifier=self._resolve_cooloff_classifier(),
+                    progress=self._scan_progress, scan_id=scan_id,
                 )
                 # Regime Multi-Strategy: rebuild the ScanContext on resume too, else
                 # MR would be silently inert (and the kill-switch unread) for resumed
@@ -1118,8 +1123,24 @@ class ScannerService:
             "max_debate_rounds": config.get("max_debate_rounds"),
             "auto_trade_results": scan.get("auto_trade_results", []),
             "auto_trade_summaries": scan.get("auto_trade_summaries", []),
+            "auto_trade_config_count": self._auto_trade_config_count(config),
         }
 
+    @staticmethod
+    def _auto_trade_config_count(config: Any) -> int:
+        """Number of auto-trade configs on a scan (CR-6). Derived at serialize time
+        from the scan config — no DB column, retroactive for old scans. Drives the
+        frontend's poll-through-tail / WS-open / panel-mount predicate, which must NOT
+        depend on volatile local form state."""
+        if isinstance(config, str):
+            try:
+                config = _json.loads(config)
+            except Exception:
+                return 0
+        if not isinstance(config, dict):
+            return 0
+        cfgs = config.get("auto_trade_configs")
+        return len(cfgs) if isinstance(cfgs, list) else 0
     def _serialize_db(self, scan: Dict[str, Any]) -> Dict[str, Any]:
         config = scan.get("config", {})
         if isinstance(config, str):
@@ -1152,6 +1173,7 @@ class ScannerService:
             "max_debate_rounds": config.get("max_debate_rounds"),
             "auto_trade_results": scan.get("auto_trade_results") or [],
             "auto_trade_summaries": scan.get("auto_trade_summaries") or [],
+            "auto_trade_config_count": self._auto_trade_config_count(config),
         }
 
     async def _append_auto_trade_results(self, scan_id: str, executions: list) -> None:

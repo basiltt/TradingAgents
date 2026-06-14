@@ -350,6 +350,13 @@ def create_app() -> FastAPI:
         # Real-time per-stage progress stream for the backtest UI (load → warm →
         # simulate → metrics → complete), served over /ws/v1/backtest/{run_id}.
         app.state.backtest_progress_manager = BacktestProgressManager()
+        # Real-time per-stage progress stream for the post-scan auto-trade tail,
+        # served over /ws/v1/scanner/{scan_id}/auto-trade (Phase 1).
+        from backend.services.scan_progress_manager import ScanProgressManager
+        app.state.scan_progress_manager = ScanProgressManager()
+        # Wire the live progress manager into the scanner so per-scan executors emit
+        # post-scan auto-trade progress to the WS stream.
+        app.state.scanner_service._scan_progress = app.state.scan_progress_manager
         app.state.backtest_service = BacktestService(
             db=db, kline_cache=app.state.kline_cache_service,
             progress_manager=app.state.backtest_progress_manager,
@@ -806,6 +813,8 @@ def create_app() -> FastAPI:
     app.include_router(ws_router)
     app.include_router(ws_accounts_router)
     app.include_router(ws_backtest_router)
+    from backend.routers.ws_scan_progress import router as ws_scan_progress_router
+    app.include_router(ws_scan_progress_router)
 
     # MCP server (AI agent integration) — single integration seam. Installs the
     # permanent /mcp/rpc indirection mount (503 gate until enabled) + the

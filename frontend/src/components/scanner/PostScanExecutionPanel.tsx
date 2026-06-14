@@ -1,0 +1,277 @@
+import * as React from "react";
+
+import { cn } from "@/lib/utils";
+import type { AutoTradeResult, AutoTradeSummary } from "@/api/client";
+import type {
+  ScanStep,
+  ScanAccountRow,
+  ScanOrderRow,
+} from "@/hooks/useScanAutoTradeProgressWS";
+
+const SECTION = "neu-surface-base neu-surface-raised rounded-[var(--neu-radius-lg)] border-none shadow-[var(--shadow-card)]";
+
+/** Ordered post-scan pipeline stages, pre-seeded so the full shape is visible. */
+const STAGE_ORDER: { key: string; label: string }[] = [
+  { key: "init_balances", label: "Loading balances" },
+  { key: "execute_batch", label: "Placing batch orders" },
+  { key: "fill_immediate", label: "Filling remaining slots" },
+  { key: "post_scan_recheck", label: "Re-checking accounts" },
+  { key: "cleanup_rules", label: "Cleaning up rules" },
+  { key: "account_summaries", label: "Finalizing summaries" },
+];
+
+type StepStatus = "pending" | "active" | "done" | "failed" | "skipped";
+
+function stepStatus(steps: ScanStep[], key: string): StepStatus {
+  const s = steps.find((x) => x.stage === key);
+  if (!s) return "pending";
+  if (s.status === "done") return "done";
+  if (s.status === "failed") return "failed";
+  if (s.status === "skipped") return "skipped";
+  return "active";
+}
+
+const STATUS_DOT: Record<StepStatus, string> = {
+  pending: "bg-[var(--neu-text-muted)]/40",
+  active: "bg-[var(--neu-accent)] animate-pulse",
+  done: "bg-[var(--neu-success)]",
+  failed: "bg-[var(--neu-danger)]",
+  skipped: "bg-[var(--neu-warning)]",
+};
+
+function StepRow({ label, status }: { label: string; status: StepStatus }) {
+  return (
+    <div className="flex items-center gap-3 py-1.5">
+      <span className={cn("size-2.5 shrink-0 rounded-full", STATUS_DOT[status])} aria-hidden />
+      <span
+        className={cn(
+          "text-xs font-medium",
+          status === "pending" ? "text-[var(--neu-text-muted)]" : "text-[var(--neu-text-strong)]",
+        )}
+      >
+        {label}
+      </span>
+      <span className="ml-auto text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--neu-text-muted)]">
+        {status}
+      </span>
+    </div>
+  );
+}
+
+const SIDE_TONE: Record<string, string> = {
+  buy: "text-[var(--neu-success)]",
+  sell: "text-[var(--neu-danger)]",
+};
+
+function ConnectionBadge({ connected, terminal }: { connected: boolean; terminal: boolean }) {
+  const [label, dot] = terminal
+    ? ["Done", "bg-[var(--neu-text-muted)]"]
+    : connected
+      ? ["Live", "bg-[var(--neu-accent)] animate-pulse"]
+      : ["Polling", "bg-[var(--neu-warning)]"];
+  return (
+    <span
+      role="status"
+      className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-background/55 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground"
+    >
+      <span className={cn("size-2 rounded-full", dot)} aria-hidden />
+      {label}
+    </span>
+  );
+}
+
+export interface PostScanExecutionPanelProps {
+  /** Live state from useScanAutoTradeProgressWS. */
+  steps: ScanStep[];
+  accounts: ScanAccountRow[];
+  orders: ScanOrderRow[];
+  pct: number | null;
+  connected: boolean;
+  terminal: boolean;
+  cooloffUntil: number | null;
+  /** Authoritative persisted results from the 3s poll (source of truth on terminal). */
+  results?: AutoTradeResult[];
+  summaries?: AutoTradeSummary[];
+  /** Map account id -> human label (for the persisted/terminal view only). */
+  accountLabel?: (id: string) => string;
+}
+
+/**
+ * Live post-scan auto-trade execution panel (Phase 1).
+ *
+ * While the tail runs, renders the WS-driven stepper + per-account rows + order
+ * feed. When no live events have arrived yet but the poll has persisted results
+ * (cold-load / WS-down / terminal), it renders the authoritative persisted view —
+ * so the panel converges correctly whether reached live or cold.
+ */
+export function PostScanExecutionPanel({
+  steps,
+  accounts,
+  orders,
+  pct,
+  connected,
+  terminal,
+  cooloffUntil,
+  results,
+  summaries,
+  accountLabel,
+}: PostScanExecutionPanelProps) {
+  const hasLive = steps.length > 0 || accounts.length > 0 || orders.length > 0;
+  const persisted = results ?? [];
+
+  // Cooloff countdown (a confirmed IP-ban pause, distinct from a micro-throttle).
+  const [now, setNow] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    if (!cooloffUntil) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [cooloffUntil]);
+  const cooloffSecs = cooloffUntil ? Math.max(0, Math.round(cooloffUntil - now / 1000)) : 0;
+
+  return (
+    <div className={cn(SECTION, "space-y-4 p-4")}>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--neu-text-muted)]">
+          Auto-trade execution
+        </p>
+        <div className="flex items-center gap-2">
+          {typeof pct === "number" && !terminal ? (
+            <span className="text-[11px] font-mono tabular-nums text-[var(--neu-text-muted)]">{pct}%</span>
+          ) : null}
+          <ConnectionBadge connected={connected} terminal={terminal} />
+        </div>
+      </div>
+
+      {cooloffUntil && cooloffSecs > 0 ? (
+        <div className="rounded-[var(--neu-radius-md)] border border-[color-mix(in_oklch,var(--neu-warning)_25%,var(--neu-stroke-soft))] bg-[color-mix(in_oklch,var(--neu-warning)_8%,var(--neu-surface-base))] px-3.5 py-2.5 text-[var(--neu-warning)]">
+          <p className="text-xs font-semibold">
+            Trading paused ~{Math.ceil(cooloffSecs / 60)}m — rate-limit cooloff
+          </p>
+          <p className="mt-0.5 text-[11px] opacity-80">
+            Respecting Bybit's API limits. Orders are queued, not stuck.
+          </p>
+        </div>
+      ) : null}
+
+      {/* Live stepper (pre-seeded with the full pipeline shape). */}
+      {hasLive || !terminal ? (
+        <div className="space-y-0.5">
+          {STAGE_ORDER.map((s) => (
+            <StepRow key={s.key} label={s.label} status={stepStatus(steps, s.key)} />
+          ))}
+        </div>
+      ) : null}
+
+      {/* Per-account live rows (only while streaming). */}
+      {accounts.length > 0 ? (
+        <div className="space-y-2 border-t border-[color:var(--neu-stroke-soft)] pt-3">
+          {accounts.map((a) => (
+            <div
+              key={a.acctOrdinal}
+              className="flex flex-wrap items-center gap-2 text-xs"
+            >
+              <span className="font-mono font-semibold text-[var(--neu-text-strong)]">
+                acct#{a.acctOrdinal}
+              </span>
+              {a.dryRun ? (
+                <span className="rounded-full border border-border/60 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                  dry-run
+                </span>
+              ) : (
+                <span className="rounded-full border border-[color-mix(in_oklch,var(--neu-success)_30%,var(--neu-stroke-soft))] px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-success)]">
+                  live
+                </span>
+              )}
+              <span className="text-[var(--neu-success)]">{a.tradesExecuted}✓</span>
+              <span className="text-[var(--neu-danger)]">{a.tradesFailed}✗</span>
+              <span className="text-[var(--neu-text-muted)]">{a.tradesSkipped}⏭</span>
+              {a.stoppedReason ? (
+                <span className="ml-auto text-[10px] uppercase tracking-[0.12em] text-[var(--neu-warning)]">
+                  {a.stoppedReason.replace(/_/g, " ")}
+                </span>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {/* Live order feed (newest first, bounded). */}
+      {orders.length > 0 ? (
+        <div className="custom-scrollbar max-h-40 space-y-1.5 overflow-y-auto border-t border-[color:var(--neu-stroke-soft)] pt-3 pr-1">
+          {orders.map((o) => (
+            <div key={o.seq} className="flex items-center gap-2 text-xs">
+              <span className="font-mono font-semibold text-[var(--neu-text-strong)]">{o.symbol}</span>
+              {o.side ? <span className={cn("uppercase", SIDE_TONE[o.side])}>{o.side}</span> : null}
+              <span className="text-[10px] text-[var(--neu-text-muted)]">acct#{o.acctOrdinal}</span>
+              <span className="ml-auto">
+                {o.status === "done" ? (
+                  <span className="text-[var(--neu-success)]">✓</span>
+                ) : o.status === "failed" ? (
+                  <span className="text-[var(--neu-danger)]">✗</span>
+                ) : o.reasonCode ? (
+                  <span className="text-[10px] text-[var(--neu-warning)]">{o.reasonCode.replace(/_/g, " ")}</span>
+                ) : null}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {/* Persisted / terminal view: when no live events but the poll has results. */}
+      {!hasLive && persisted.length > 0 ? (
+        <div className="space-y-2">
+          <div className="grid grid-cols-2 gap-3">
+            <div className={cn(SECTION, "p-3 text-center")}>
+              <p className="text-xl font-semibold text-[var(--neu-success)]">
+                {persisted.filter((r) => r.status === "success").length}
+              </p>
+              <p className="mt-1 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Executed</p>
+            </div>
+            <div className={cn(SECTION, "p-3 text-center")}>
+              <p className="text-xl font-semibold text-[var(--neu-danger)]">
+                {persisted.filter((r) => r.status === "failed").length}
+              </p>
+              <p className="mt-1 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Failed</p>
+            </div>
+          </div>
+          <div className="custom-scrollbar max-h-40 space-y-1.5 overflow-y-auto pr-1">
+            {persisted.map((r, i) => (
+              <div key={i} className="flex items-center gap-2 text-xs" title={r.error || undefined}>
+                <span className="font-mono font-semibold text-[var(--neu-text-strong)]">{r.symbol}</span>
+                {r.side ? <span className={cn("uppercase", SIDE_TONE[r.side])}>{r.side}</span> : null}
+                <span className="truncate text-[10px] text-[var(--neu-text-muted)]">
+                  {accountLabel ? accountLabel(r.account_id) : r.account_id.slice(0, 8)}
+                </span>
+                <span className="ml-auto">
+                  {r.status === "success" ? (
+                    <span className="text-[var(--neu-success)]">✓</span>
+                  ) : (
+                    <span className="text-[var(--neu-danger)]">✗</span>
+                  )}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {/* Account-status warnings from the persisted summaries (preserved safety surface). */}
+      {(summaries ?? []).some((s) => s.stopped_reason) ? (
+        <div className="space-y-1.5 border-t border-[color:var(--neu-stroke-soft)] pt-3">
+          {(summaries ?? [])
+            .filter((s) => s.stopped_reason)
+            .map((s, i) => (
+              <div key={i} className="flex items-center gap-2 text-xs text-[var(--neu-warning)]">
+                <span className="font-semibold text-foreground">
+                  {accountLabel ? accountLabel(s.account_id) : s.account_id?.slice(0, 8)}
+                </span>
+                <span className="ml-auto text-[10px] uppercase tracking-[0.12em]">
+                  {s.stopped_reason?.replace(/_/g, " ")}
+                </span>
+              </div>
+            ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}

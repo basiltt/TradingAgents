@@ -38,15 +38,18 @@
 | 20 | 06:10 | Phase 0 review R1 (adversarial) | DONE | 2 agents. Found CRITICAL P0-F1: per-UID 10006 (recoverable throttle) tripped a process-wide 10-min ban → global outage. Plus P0-F2 herd recovery, F4 uncapped class, F7 first-victim exception, F10 sync un-gated, DB-blip flag coupling. ALL FIXED: ban only on IP-ban signal (10018/ip-banned msg), half-open single-probe recovery, registry validation, RateGateBanAbort on trip, _do_sync_time always gated, revert flags read own key (not __all__). 153 tests green, 0 regressions. |
 | 21 | 06:35 | Phase 0 commit | DONE | 927ee08 — feat(rate-limit): Phase 0 Bybit rate-gate correctness + ban breaker. 153 tests green. |
 | 22 | 07:00 | Phase 0 review R2 (5 agents) | DONE | CRITICAL: half-open was dead code (herd); RateGateBanAbort(BaseException) escaped `except Exception` in 5 supervisor-less loops → loops DIE on ban. FIXED via redesign: background lanes WAIT OUT bans (raise_on_ban=False default), only lane=order raises; proper single-probe half-open + clear_ban-on-success; validate_registry out of fail-open; scanner+manual catch ban. +tests. 258 green. |
-| 23 | 07:30 | Phase 0 review R3 (5 agents) | IN_PROGRESS | verify R2 redesign |
+| 23 | 07:30 | Phase 0 review R3 (5 agents) | DONE | Found CRITICAL residual both backend+integration agents flagged: detection-time RateGateBanAbort raise (bybit_client:247) was LANE-INDEPENDENT → first background loop to detect 10018 crashes. FIXED: lane-gated (order→RateGateBanAbort, background→catchable BybitAPIError); ABA generation guard on clear_ban; bare "banned" removed; probe window 30s≥timeout. +tests. 126 rate-gate + 152 scanner/accounts green. |
+| 24 | 08:00 | Phase 0 review fixes commit | DONE | c53c5a9 — 3 review rounds complete, all Critical/High fixed. Phase 0 CLOSED. |
+| 25 | 08:05 | Phase 1 impl (TASK-1.1..1.8) | DONE | TDD. Backend: scan_progress_manager.py (per-scan pub/sub), ws_scan_progress.py (strict-origin + scan-existence + identical-close), ScanAutoTradeProgressEvent, executor progress sink (None-safe fail-open), scanner+manual wiring, auto_trade_config_count serializer field, main.py manager+router. Frontend: api/ws.ts (shared base + close-code classifier), useScanAutoTradeProgressWS hook, PostScanExecutionPanel, ScannerPage poll-through-tail + active predicate + single-renderer. 17 backend + 7 hook tests green; 1062 frontend + 136 scanner/auto-trade regression green; prod build OK. |
+| 26 | 10:35 | Phase 1 commit | IN_PROGRESS | — |
 
 ## Implementation Progress
 
 | Phase | Status | Commit | Notes |
 |-------|--------|--------|-------|
-| Phase 0 (rate-gate) | ✅ DONE (impl+review+commit) | 927ee08 | 153 tests green; adversarial review found+fixed the per-UID-10006→global-ban outage |
-| Phase 1 (WS) | PENDING | — | next |
-| Phase 2 (parallelism) | PENDING | — | — |
+| Phase 0 (rate-gate) | ✅ DONE (3 review rounds) | 927ee08, c53c5a9 | Ban breaker money-safety |
+| Phase 1 (WS) | IMPL DONE, review pending | — | Manager+endpoint+hook+panel; poll-through-tail fix; live+persisted views |
+| Phase 2 (parallelism) | PENDING | — | next |
 | Phase 3 (UX) | PENDING | — | — |
 
 **Deferred to Phase 3 (tracked):** admin-endpoint trust-boundary hardening (TASK-3.3), per-tail feasibility auto-reduce refinement, P0-F5 deque eviction (low), P0-F8 sync-lane reservation (low), P0-F11 WS-accounting confirmation (low).

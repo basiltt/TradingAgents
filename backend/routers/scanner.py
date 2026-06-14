@@ -246,6 +246,8 @@ async def trigger_auto_trade(request: Request, scan_id: str):
                 recorder=debug_recorder, debug_ctx=debug_ctx,
                 cooloff_repo=getattr(request.app.state, "cooloff_repo", None),
                 cooloff_classifier=getattr(request.app.state, "cooloff_classifier", None),
+                progress=getattr(request.app.state, "scan_progress_manager", None),
+                scan_id=scan_id,
             )
             if debug_recorder is not None and debug_ctx is not None:
                 await debug_recorder.open_run(debug_ctx, config_snapshot={"num_configs": len(auto_configs), "manual": True})

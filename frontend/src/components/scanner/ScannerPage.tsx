@@ -24,6 +24,8 @@ import { MobileCollapse } from "@/components/analysis/MobileCollapse";
 import { AgentModelOverrides, loadOverrides, filterOverridesForAssetType } from "@/components/analysis/AgentModelOverrides";
 import { DIRECTION_CONFIG } from "@/components/scanner/constants";
 import { AutoTradeSection } from "@/components/scanner/AutoTradeSection";
+import { PostScanExecutionPanel } from "@/components/scanner/PostScanExecutionPanel";
+import { useScanAutoTradeProgressWS } from "@/hooks/useScanAutoTradeProgressWS";
 import { cooloffGateValid, collectCooloffGateErrors } from "@/components/scanner/cooloffValidation";
 import { NeuSwitch, NeuScoreBar } from "@/design-system/neumorphism";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -47,6 +49,37 @@ const LANGUAGES = ["English", "Chinese", "Japanese", "Korean", "Spanish", "Frenc
 const STORAGE_KEY = "tradingagents_settings";
 const SCANNER_KEY = "tradingagents_scanner";
 const SCANNER_PANEL_CLASS = "neu-surface-base neu-surface-raised rounded-[var(--neu-radius-lg)] border-none shadow-[var(--shadow-card)]";
+
+/** Upper bound (ms since the scan completed) past which we stop treating the
+ *  post-scan auto-trade tail as "active" — so a tail that crashes without landing
+ *  summaries can't poll/stream forever (FF-1). The tail is bounded by Bybit's rate
+ *  limits but ~10 min is a generous ceiling for a large multi-account fleet. */
+const POST_SCAN_TAIL_MAX_MS = 10 * 60 * 1000;
+
+/**
+ * Is the post-scan auto-trade tail plausibly still executing? True when the scan
+ * has auto-trade configs, has reached a terminal scan status, but has not yet
+ * landed its `auto_trade_summaries` (which are written only at tail finalization)
+ * — within an elapsed upper bound. Drives both the poll-through-tail and the
+ * WS-open gate. The placement steps run while status is still "running", so the
+ * WS is opened from the running phase onward (see the `active` flag below).
+ */
+function postScanTailActive(s: ScanStatus | undefined): boolean {
+  if (!s) return false;
+  const configured = (s.auto_trade_config_count ?? 0) > 0;
+  if (!configured) return false;
+  const summariesLanded = (s.auto_trade_summaries?.length ?? 0) > 0;
+  if (summariesLanded) return false;
+  const terminal = s.status === "completed" || s.status === "cancelled" || s.status === "failed";
+  if (!terminal) return false;
+  // Bound by elapsed time since completion.
+  if (s.completed_at) {
+    const elapsed = Date.now() - new Date(s.completed_at).getTime();
+    if (Number.isFinite(elapsed) && elapsed > POST_SCAN_TAIL_MAX_MS) return false;
+  }
+  return true;
+}
+
 const SCANNER_SECTION_CLASS = "neu-surface-base neu-surface-raised rounded-[var(--neu-radius-md)] px-3 py-3 sm:px-4.5 sm:py-4 border-none shadow-[var(--shadow-card)]";
 const SCANNER_LABEL_CLASS = "section-eyebrow text-[0.62rem] tracking-[0.22em] text-[var(--neu-text-muted)]";
 const SCANNER_SEGMENT_CLASS = "grid grid-cols-1 gap-1.5 sm:gap-2 rounded-[var(--neu-radius-md)] bg-[var(--neu-surface-muted)] p-1 sm:p-1.5 shadow-[var(--neu-shadow-inset)] sm:grid-cols-2 border-none";
@@ -481,8 +514,16 @@ export function ScannerPage() {
     queryFn: ({ signal }) => apiClient.getScan(activeScanId!, signal),
     enabled: !!activeScanId,
     refetchInterval: (query) => {
-      const status = query.state.data?.status;
-      return status === "running" ? 3000 : false;
+      const s = query.state.data;
+      if (!s) return false;
+      // Keep polling while the scan runs AND while the post-scan auto-trade tail
+      // is plausibly still executing (the tail runs AFTER status flips to
+      // "completed"; without this the page froze at completed-but-no-trades).
+      // FF-1: cap the window with an elapsed bound so a tail that never lands
+      // summaries can't poll forever.
+      if (s.status === "running") return 3000;
+      const tailActive = postScanTailActive(s);
+      return tailActive ? 3000 : false;
     },
     retry: false,
   });
@@ -499,6 +540,16 @@ export function ScannerPage() {
   const scan: ScanStatus | undefined = scanQuery.data;
   const isRunning = scan?.status === "running";
   const isDone = scan?.status === "completed" || scan?.status === "cancelled" || scan?.status === "failed";
+
+  // Live post-scan auto-trade progress (Phase 1). The placement steps run while
+  // the scan is still "running" (status flips to completed only AFTER placement),
+  // so open the WS from the running phase onward, while configs exist and no
+  // summaries have landed yet (bounded by postScanTailActive's elapsed cap).
+  const hasAutoTradeConfigs = (scan?.auto_trade_config_count ?? 0) > 0;
+  const wsActive = !!scan && hasAutoTradeConfigs && (isRunning || postScanTailActive(scan));
+  const scanProgress = useScanAutoTradeProgressWS(wsActive ? activeScanId ?? undefined : undefined, wsActive);
+  // Show the live panel for any auto-trade-configured scan (live OR persisted).
+  const showPostScanPanel = hasAutoTradeConfigs;
 
   // Results view: one-shot switch to the Results tab on the running→completed rising
   // edge, then the user's manual tab choice wins. Re-armed when a new scan begins.
@@ -1187,8 +1238,28 @@ export function ScannerPage() {
               )}
             </div>
 
-            {/* Auto-trade results */}
-            {scan.auto_trade_results && scan.auto_trade_results.length > 0 && (
+            {/* Live post-scan auto-trade execution panel (Phase 1). Owns the
+                executions + account-status view when mounted; the legacy blocks
+                below are suppressed to avoid a double render. */}
+            {showPostScanPanel && (
+              <div className="border-t border-[color:var(--neu-stroke-soft)] pt-4">
+                <PostScanExecutionPanel
+                  steps={scanProgress.steps}
+                  accounts={scanProgress.accounts}
+                  orders={scanProgress.orders}
+                  pct={scanProgress.pct}
+                  connected={scanProgress.connected}
+                  terminal={scanProgress.terminal}
+                  cooloffUntil={scanProgress.cooloffUntil}
+                  results={scan.auto_trade_results}
+                  summaries={scan.auto_trade_summaries}
+                  accountLabel={(id) => accountLabelMap[id] || id.slice(0, 8)}
+                />
+              </div>
+            )}
+
+            {/* Auto-trade results (legacy view — only when the live panel is not mounted) */}
+            {!showPostScanPanel && scan.auto_trade_results && scan.auto_trade_results.length > 0 && (
               <div className="space-y-3 border-t border-[color:var(--neu-stroke-soft)] pt-4">
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--neu-text-muted)]">Auto-trade executions</p>
@@ -1216,8 +1287,10 @@ export function ScannerPage() {
               </div>
             )}
 
-            {/* Auto-trade account summaries (stopped reasons, rule failures) */}
-            {scan.auto_trade_summaries && scan.auto_trade_summaries.length > 0 && (
+            {/* Auto-trade account summaries (stopped reasons, rule failures) —
+                legacy view; the live panel renders this when mounted (FF-2 keeps
+                the AI-manager notice below always rendered). */}
+            {!showPostScanPanel && scan.auto_trade_summaries && scan.auto_trade_summaries.length > 0 && (
               <div className="space-y-3 border-t border-[var(--neu-stroke-strong)]/20 pt-4">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Account status</p>
                 <div className="space-y-2">
