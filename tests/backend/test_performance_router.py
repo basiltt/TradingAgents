@@ -86,3 +86,22 @@ def test_trades_page_returns_rows_and_cursor():
     assert body["has_more"] is True
     # the internal tuple cursor is encoded to an opaque string for the client
     assert isinstance(body["cursor"], str)
+
+
+def test_live_returns_payload_and_degraded():
+    svc = MagicMock()
+    svc.compute_live = AsyncMock(return_value={
+        "positions": [], "account_tiles": [], "sector_concentration": [], "degraded": True,
+    })
+    client = TestClient(_app(svc))
+    r = client.get("/api/v1/performance/live?scope=all")
+    assert r.status_code == 200
+    assert r.json()["degraded"] is True
+
+
+def test_live_service_missing_503():
+    app = FastAPI()
+    app.include_router(perf_router, prefix="/api/v1")
+    client = TestClient(app)
+    r = client.get("/api/v1/performance/live?scope=all")
+    assert r.status_code == 503

@@ -92,3 +92,12 @@ async def get_trades_page(
     result["cursor"] = _encode_cursor(result.get("cursor"))
     return result
 
+
+@router.get("/live")
+async def get_live(
+    request: Request,
+    scope: str = Query("all"),
+):
+    svc = _svc(request)
+    return await svc.compute_live(scope=scope)
+
