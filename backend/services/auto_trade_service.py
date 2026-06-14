@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -58,20 +59,36 @@ def _sanitize_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
     return {k: v for k, v in cfg.items() if not any(b in k.lower() for b in bad)}
 
 
+# A safe enum-like reason code is lowercase alnum + underscore only (no spaces, URLs,
+# punctuation). Used to scrub stopped_reason before it reaches the WS wire.
+_SAFE_REASON_CODE = re.compile(r"[a-z0-9_]+")
+
+
 def _wire_reason_code(stopped_reason: Optional[str]) -> Optional[str]:
     """Coerce a stopped_reason to a SAFE, enum-like code for the WS wire (FR-045/R119).
-
     Most stop reasons are already short enum codes (e.g. "max_trades_reached",
     "positions_already_open"), but two branches embed raw exception text —
     ``f"wallet_fetch_failed: {str(e)[:200]}"`` and
     ``f"positions_fetch_failed: {str(e)[:200]}"`` — which could carry URLs, params, or
     server messages. The live progress payload must never leak free-text error strings
     (the wire allow-list keeps account_id/label off the wire; reason_code must likewise
-    stay a code). Strip anything after the first ``:`` so only the stable code prefix
-    crosses the wire; the full text remains in the server-side logs."""
+    stay a code).
+
+    Defense in depth against a FUTURE free-text reason: (1) take only the prefix before
+    the first ``:`` (strips the two known exception suffixes), then (2) require the result
+    to be a bare ``[a-z0-9_]+`` code — anything else (a colon-less free-text reason a
+    future engineer might add) is replaced with a generic ``"error"`` so NO raw text can
+    cross the wire even if the colon convention is broken later. The full text stays in
+    the server-side logs."""
     if not stopped_reason:
         return None
-    return str(stopped_reason).split(":", 1)[0].strip() or None
+    code = str(stopped_reason).split(":", 1)[0].strip()
+    if not code:
+        return None
+    if not _SAFE_REASON_CODE.fullmatch(code):
+        # Colon-less free text (or an unexpected shape) — never put it on the wire.
+        return "error"
+    return code
 
 
 @dataclass
@@ -114,6 +131,21 @@ class AutoTradeExecutor:
         # RateGateBanAbort/cancel propagated — drained by the orchestrator's _run_stage
         # so orders that hit the exchange are persisted even on a mid-stage abort.
         self._last_partial_merge: List[TradeExecution] = []
+        # Phase 2 re-entrancy guard: True while a run_post_scan_tail is executing on THIS
+        # executor. The merge slots above (_merge_slots / _last_partial_merge) are
+        # per-executor instance state that assumes strictly ONE tail at a time on a given
+        # executor (single-flight is keyed by scan_id at the scan layer; each scan builds
+        # a fresh executor). This flag makes that assumption enforced locally so a future
+        # caller that reuses/double-invokes one executor fails loudly instead of silently
+        # corrupting the merge (dropped/double-counted real placements).
+        self._tail_running: bool = False
+        # Phase 2 deadlock guard: True while a fan-out holds self._lock (see
+        # _fan_out_by_account). self._lock is a non-reentrant asyncio.Lock; this flag lets
+        # an accidental nested fan-out fail loudly instead of deadlocking the money path.
+        self._fanout_lock_held: bool = False
+        # True once restore_state seeds prior-run executions (resume). Suppresses the
+        # over-cap self-check (restored execs may exceed a since-reduced max_trades).
+        self._resumed: bool = False
         # Per-scan MR caches; created lazily (annotation-only here, so getattr-based
         # lazy init still sees the attribute as absent until first use).
         self._mr_mean_cache: Dict[tuple[str, int, str], Optional[float]]
@@ -391,6 +423,13 @@ class AutoTradeExecutor:
 
     def restore_state(self, prior_results: List[Dict[str, Any]]) -> None:
         """Restore trade counters and execution records from previously executed auto_trade_results (for resume)."""
+        # Mark this executor as resumed: its state.executions are SEEDED from a prior run
+        # (possibly under a different max_trades). The placement-integrity over-cap
+        # self-check (TASK-3.5) is therefore suppressed for a resumed executor — restored
+        # executions could legitimately exceed a since-reduced cap, and that is NOT a
+        # fan-out invariant break (the thing the detector guards). Duplicate detection
+        # still runs (a true double-placement is always a bug, resumed or not).
+        self._resumed = True
         account_success: Dict[str, int] = {}
         account_failed: Dict[str, int] = {}
         account_executions: Dict[str, List[TradeExecution]] = {}
@@ -1010,6 +1049,37 @@ class AutoTradeExecutor:
         """
         from backend.services.bybit_rate_gate import RateGateBanAbort
 
+        # Re-entrancy guard: the per-executor merge slots (_merge_slots /
+        # _last_partial_merge) assume ONE tail at a time on this executor. A concurrent
+        # second invocation on the same executor would corrupt the merge (drop or
+        # double-count real placements). Single-flight (try_begin_tail, keyed by scan_id)
+        # already prevents this at the scan layer + each scan builds a fresh executor;
+        # this assert makes the invariant enforced LOCALLY so a future reuse fails loudly.
+        if self._tail_running:
+            raise RuntimeError(
+                "run_post_scan_tail re-entered on the same executor — the merge slots are "
+                "single-tail-per-executor; build a fresh executor or use single-flight."
+            )
+        self._tail_running = True
+        try:
+            return await self._run_post_scan_tail_body(
+                results, persist_cb=persist_cb, place_trades=place_trades,
+                emit_complete=emit_complete, _RateGateBanAbort=RateGateBanAbort,
+            )
+        finally:
+            self._tail_running = False
+
+    async def _run_post_scan_tail_body(
+        self,
+        results: List[Dict[str, Any]],
+        *,
+        persist_cb,
+        place_trades: bool,
+        emit_complete: bool,
+        _RateGateBanAbort,
+    ) -> Dict[str, Any]:
+        RateGateBanAbort = _RateGateBanAbort
+
         all_executions: List[TradeExecution] = []
 
         async def _persist(stage: str, execs: List[TradeExecution]) -> None:
@@ -1118,7 +1188,10 @@ class AutoTradeExecutor:
                     find_over_cap_accounts,
                 )
                 dups = find_duplicate_placements(self)
-                over = find_over_cap_accounts(self)
+                # Over-cap is suppressed for a resumed executor: its restored executions
+                # may legitimately exceed a since-reduced max_trades (not a fan-out break).
+                # A true DUPLICATE is always a bug, resumed or not, so dups always checks.
+                over = [] if self._resumed else find_over_cap_accounts(self)
                 if dups or over:
                     logger.error("post_scan_placement_integrity_violation", extra={
                         "severity": "high", "scan_id": self._scan_id,
@@ -1179,18 +1252,45 @@ class AutoTradeExecutor:
         ``mode`` selects which configs participate: "batch" -> execution_mode=="batch";
         "immediate" -> execution_mode=="immediate".
 
-        Concurrency model: the whole fan-out runs under ``self._lock`` (held once for
-        the duration), exactly as the old single-lock ``execute_batch`` body did. The
-        per-account tasks run concurrently WITHIN that held lock — they never acquire
-        ``self._lock`` themselves — so an external mutator of ``self._state``
+        Concurrency model: this ONE fan-out (a single stage — batch OR immediate-fill)
+        runs under ``self._lock``, held for the duration of that stage's gather, exactly
+        as the old single-lock ``execute_batch`` body did. (The full tail is THREE
+        fan-out calls — batch -> fill -> recheck — so ``self._lock`` is released and
+        re-acquired BETWEEN stages; an external ``self._state`` mutator can interleave at
+        a stage boundary exactly as it could pre-feature, NOT held off for the whole tail.)
+        The per-account tasks run concurrently WITHIN the held lock — they MUST NEVER
+        acquire ``self._lock`` themselves (it is a non-reentrant asyncio.Lock): a helper
+        reachable from ``run_account``/``_try_trade`` that takes ``self._lock`` would
+        DEADLOCK the money path. ``self._lock`` excludes the external mutators
         (``refresh_configs`` / ``sync_active_close_rules_from_config`` /
-        ``post_scan_recheck``, all of which acquire ``self._lock``) stays excluded
-        from the fan-out just as before, while account-level parallelism is preserved.
+        ``post_scan_recheck``, all of which acquire it) from THIS stage's fan-out.
         Lock order: ``self._lock`` (executor) -> account-sem -> position-lock.
         """
         from backend.services import post_scan_concurrency as _psc
 
+        # Danger-site guard for the non-reentrant-lock invariant above: a per-account
+        # task that (directly or via a future helper) re-enters self._lock deadlocks.
+        # We can't detect that generically, but we CAN flag that the fan-out is the lock
+        # holder so an accidental nested `_fan_out_by_account` (the nesting a future
+        # engineer is most likely to introduce) fails loudly instead of hanging forever.
+        if getattr(self, "_fanout_lock_held", False):
+            raise RuntimeError(
+                "_fan_out_by_account re-entered while self._lock is held — a per-account "
+                "task must NOT trigger another fan-out / acquire self._lock (non-reentrant)."
+            )
+
         async with self._lock:
+            self._fanout_lock_held = True
+            try:
+                return await self._fan_out_run(unique_results, run_account, mode, _psc)
+            finally:
+                self._fanout_lock_held = False
+
+    async def _fan_out_run(self, unique_results, run_account, mode, _psc) -> List[TradeExecution]:
+        """The locked fan-out body (called only by _fan_out_by_account while self._lock
+        is held + _fanout_lock_held is set). Split out only so the lock acquisition +
+        re-entrancy guard read cleanly; do NOT call this directly."""
+        if True:
             # Group states by account in _state insertion order (deterministic merge).
             by_account: Dict[str, List["_AccountState"]] = {}
             for state in self._state.values():

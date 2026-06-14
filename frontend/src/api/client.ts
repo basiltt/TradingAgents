@@ -507,11 +507,15 @@ export interface ScanAutoTradeProgressEvent {
   schema_version: number;
   scan_id: string;
   stage: string;
-  status: "active" | "done" | "failed" | "skipped" | string;
+  status: "active" | "done" | "failed" | "skipped" | "cancelled" | "placed" | string;
   pct: number | null;
   seq: number;
   ts: number;
-  account_id?: string | null;
+  // NOTE: there is deliberately NO `account_id` field. The raw trading-account id is
+  // STRIPPED from the wire payload server-side (ws_scan_progress._WIRE_FIELDS) so it
+  // never reaches the browser — the UI uses the opaque `acct_ordinal` instead. Do NOT
+  // add account_id here: making the type "true" would tempt relaxing the server-side
+  // wire filter and re-introduce the account-id leak the filter exists to prevent.
   acct_ordinal?: number | null;
   symbol?: string | null;
   side?: string | null;

@@ -220,3 +220,34 @@ async def test_inline_self_check_logs_high_alert_on_seeded_violation(caplog):
     assert any("post_scan_placement_integrity_violation" in r.message for r in caplog.records), (
         "the inline self-check did not log the HIGH integrity-violation alert"
     )
+
+
+@pytest.mark.asyncio
+async def test_resumed_executor_suppresses_over_cap_alert(caplog):
+    # Resume edge: an operator REDUCED max_trades between the original run and a resume.
+    # restore_state seeds 3 prior executions; the new cap is 2. The over-cap self-check
+    # must NOT fire a false HIGH alert (restored execs aren't a fan-out invariant break).
+    # A true duplicate would still alert (resumed or not) — but here there's none.
+    import logging
+
+    psc.configure_account_concurrency(1)
+    accounts = RecordingAccountsService(latency=0.0)
+    ex = AutoTradeExecutor(accounts, RecordingCloseService(), scan_id="resume-cap")
+    ex.init_configs([_cfg("accA", max_trades=2)])  # cap REDUCED to 2
+    # Restore 3 prior successful placements (placed under the old higher cap).
+    ex.restore_state([
+        {"account_id": "accA", "symbol": "BTCUSDT", "side": "sell", "status": "success", "order_id": "p1"},
+        {"account_id": "accA", "symbol": "ETHUSDT", "side": "sell", "status": "success", "order_id": "p2"},
+        {"account_id": "accA", "symbol": "SOLUSDT", "side": "sell", "status": "success", "order_id": "p3"},
+    ])
+    for st in ex._state.values():
+        st.base_capital = 1000.0
+    assert ex._resumed is True
+    # The detector helper still SEES the over-cap (3 > 2) ...
+    assert find_over_cap_accounts(ex) == [("accA", 3, 2)]
+    # ... but the inline self-check SUPPRESSES the alert for a resumed executor.
+    with caplog.at_level(logging.ERROR):
+        await ex.run_post_scan_tail([], place_trades=True)  # empty results: no new trades
+    assert not any("post_scan_placement_integrity_violation" in r.message for r in caplog.records), (
+        "over-cap alert wrongly fired for a resumed executor (false positive)"
+    )

@@ -296,7 +296,10 @@ def create_app() -> FastAPI:
         # ── Post-scan optimization: account-concurrency width (Phase 2) ──────────
         # Default 1 => the parallel tail path is byte-identical to the old sequential
         # path. width>1 is an operator opt-in (env POST_SCAN_ACCOUNT_CONCURRENCY),
-        # FR-049-clamped. Fail-open: a bad value degrades to the safe sequential path.
+        # FR-049-clamped. NOTE: this deliberately does NOT use the _validated_int helper
+        # above (which RAISES on a bad value). For THIS knob a bad/out-of-range value must
+        # degrade to the safe sequential path (width=1), never abort trading startup —
+        # configure_account_concurrency clamps to [1,16] and falls back to 1 fail-open.
         try:
             from backend.services import post_scan_concurrency
             _width_raw = os.environ.get("POST_SCAN_ACCOUNT_CONCURRENCY", "1")

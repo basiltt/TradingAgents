@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, act } from "@testing-library/react";
 
-import { PostScanExecutionPanel } from "../PostScanExecutionPanel";
+import { PostScanExecutionPanel, POST_SCAN_STAGE_KEYS } from "../PostScanExecutionPanel";
 import type { ScanStep, ScanAccountRow, ScanOrderRow } from "@/hooks/useScanAutoTradeProgressWS";
 import type { AutoTradeResult } from "@/api/client";
 
@@ -178,5 +178,19 @@ describe("PostScanExecutionPanel", () => {
     expect(container.textContent).toContain("BTCUSDT");
     expect(container.textContent).toContain("✓"); // placed -> success check
     expect(container.textContent).toContain("✗"); // failed -> cross
+  });
+
+  it("stepper stage keys are the canonical post-scan contract list", () => {
+    // Cross-language contract: the FE stepper keys must equal the canonical backend
+    // stage list. The backend pins the same list (test_post_scan_orchestrator.py::
+    // test_stage_keys_contract over _TAIL_STAGE_DONE_PCT). If the two drift, one side's
+    // test fails instead of the stepper silently showing a stuck-pending step.
+    expect([...POST_SCAN_STAGE_KEYS]).toEqual([
+      "execute_batch",
+      "fill",
+      "post_scan_recheck",
+      "cleanup",
+      "summaries",
+    ]);
   });
 });

@@ -334,6 +334,61 @@ def test_wire_reason_code_strips_free_text():
     assert _wire_reason_code("") is None
 
 
+def test_stage_keys_contract():
+    # Cross-language contract: the orchestrator's canonical tail stage keys must match
+    # the FE stepper's POST_SCAN_STAGE_KEYS (PostScanExecutionPanel.tsx). If a backend
+    # stage is renamed/added without mirroring the FE, THIS test pins the backend side
+    # and the FE contract test pins the other — so the drift fails a test instead of
+    # silently showing a stuck-pending step in the UI.
+    from backend.services.auto_trade_service import AutoTradeExecutor
+
+    assert list(AutoTradeExecutor._TAIL_STAGE_DONE_PCT.keys()) == [
+        "execute_batch", "fill", "post_scan_recheck", "cleanup", "summaries",
+    ]
+
+
+def test_wire_reason_code_hardens_against_colonless_free_text():
+    # Defense in depth: a FUTURE free-text reason WITHOUT a colon (the prefix-strip
+    # wouldn't catch it) must still be scrubbed — anything that isn't a bare [a-z0-9_]+
+    # code is replaced with a generic "error" so no raw text reaches the wire.
+    from backend.services.auto_trade_service import _wire_reason_code
+
+    assert _wire_reason_code("liq risk https://api.bybit.com?key=SECRET") == "error"
+    assert _wire_reason_code("Something With Spaces") == "error"
+    assert _wire_reason_code("UPPER_case_mixed") == "error"  # uppercase isn't a safe code
+    # A legit bare code still passes through.
+    assert _wire_reason_code("ai_paused_trading") == "ai_paused_trading"
+
+
+@pytest.mark.asyncio
+async def test_run_post_scan_tail_reentrancy_guard():
+    # The merge slots are single-tail-per-executor; a concurrent second tail on the SAME
+    # executor must fail loudly (RuntimeError) instead of silently corrupting the merge.
+    import asyncio as _asyncio
+    from backend.services.auto_trade_service import AutoTradeExecutor
+
+    psc.configure_account_concurrency(1)
+
+    class SlowAccounts(RecordingAccountsService):
+        async def place_trade(self, **kwargs):
+            await _asyncio.sleep(0.05)
+            return await super().place_trade(**kwargs)
+
+    ex = AutoTradeExecutor(SlowAccounts(), None, scan_id="reentry")
+    ex.init_configs([_cfg("accA")])
+    for st in ex._state.values():
+        st.base_capital = 1000.0
+
+    first = _asyncio.create_task(ex.run_post_scan_tail(_results("BTC", "ETH")))
+    await _asyncio.sleep(0.01)  # let the first tail enter
+    # A second concurrent tail on the same executor is rejected.
+    with pytest.raises(RuntimeError, match="re-entered on the same executor"):
+        await ex.run_post_scan_tail(_results("SOL"))
+    await first  # the first completes fine
+    # The flag is reset after completion (a later sequential tail works).
+    assert ex._tail_running is False
+
+
 @pytest.mark.asyncio
 async def test_emitted_account_event_scrubs_free_text_reason_code():
     # Integration: the per-account done emit must apply _wire_reason_code so a free-text

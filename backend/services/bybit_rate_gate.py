@@ -13,6 +13,11 @@ import threading
 import time
 from typing import Optional
 
+# Bybit V5 non-VIP IP rate limits — https://bybit-exchange.github.io/docs/v5/rate-limit
+# (verified 2026-06). Per-IP ceiling is 600 requests / 5s (a 10-min ban on breach).
+# We split the budget per channel with headroom under the 600 ceiling so a burst on one
+# channel can't starve/breach the other: 400 public + 100 private = 500 < 600. These are
+# Bybit-version-dependent — re-verify against the doc if Bybit changes the tier.
 _WINDOW_SECONDS = 5.0
 _PUBLIC_BUDGET = 400
 _PRIVATE_BUDGET = 100

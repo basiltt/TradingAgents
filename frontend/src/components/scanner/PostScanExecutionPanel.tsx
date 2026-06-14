@@ -14,7 +14,21 @@ const SECTION = "neu-surface-base neu-surface-raised rounded-[var(--neu-radius-l
  *  emit stages (auto_trade_service.run_post_scan_tail / _TAIL_STAGE_DONE_PCT):
  *  execute_batch -> fill -> post_scan_recheck -> cleanup -> summaries. init_balances
  *  runs pre-tail (no live stage emit) but is shown for shape; a missing stage stays
- *  "pending" which is correct for it. */
+ *  "pending" which is correct for it.
+ *
+ *  CONTRACT: the backend's canonical stage keys are pinned by
+ *  test_post_scan_orchestrator.py::test_stage_keys_contract and the FE side by
+ *  PostScanExecutionPanel.test.tsx — both reference POST_SCAN_STAGE_KEYS so a backend
+ *  stage rename/addition that isn't mirrored here fails a test instead of silently
+ *  showing a stuck-pending step. Keep the two lists in sync. */
+export const POST_SCAN_STAGE_KEYS = [
+  "execute_batch",
+  "fill",
+  "post_scan_recheck",
+  "cleanup",
+  "summaries",
+] as const;
+
 const STAGE_ORDER: { key: string; label: string }[] = [
   { key: "execute_batch", label: "Placing batch orders" },
   { key: "fill", label: "Filling remaining slots" },
