@@ -98,15 +98,28 @@ class TestGetRateGate:
 
 @pytest.mark.asyncio
 async def test_bybit_client_uses_gate(monkeypatch):
-    """BybitClient._wait_for_rate_limit delegates to centralized gate."""
+    """BybitClient._wait_for_rate_limit delegates to the centralized gate, routing
+    the channel/endpoint_class via the endpoint registry (FR-001)."""
     from unittest.mock import AsyncMock, patch
     from backend.services.bybit_client import BybitClient
+    from backend.services import post_scan_flags
+    post_scan_flags.reset_for_tests()
 
     mock_gate = AsyncMock()
     mock_gate.acquire_async = AsyncMock()
 
     with patch("backend.services.bybit_client.get_rate_gate", return_value=mock_gate):
-        client = BybitClient("key", "secret", "demo")
-        await client._wait_for_rate_limit()
-        # default lane is "live"; order placement uses lane="order"
-        mock_gate.acquire_async.assert_called_once_with(channel="private", lane="live")
+        client = BybitClient("key", "secret", "demo", account_id="acct-x")
+        # A private order endpoint routes to the private channel, order_create class.
+        await client._wait_for_rate_limit("/v5/order/create", lane="order")
+        mock_gate.acquire_async.assert_called_once_with(
+            channel="private", lane="order",
+            account_key="acct-x", endpoint_class="order_create",
+        )
+        mock_gate.acquire_async.reset_mock()
+        # A public market read routes to the public channel.
+        await client._wait_for_rate_limit("/v5/market/tickers", lane="live")
+        mock_gate.acquire_async.assert_called_once_with(
+            channel="public", lane="live",
+            account_key="acct-x", endpoint_class="market",
+        )

@@ -254,7 +254,35 @@ def create_app() -> FastAPI:
         configure_llm_min_spacing(llm_spacing)
 
         app.state.db = db
-        # Debug tracing is an OPTIONAL forensics feature. Its router (503 when absent)
+
+        # ── Post-scan optimization: rate-gate hardening (Phase 0) ──────────────
+        # Apply the per-account/endpoint caps from the registry to the gate, and
+        # start a periodic refresh of the revert kill-switches (channel-fix /
+        # per-endpoint-limiter / fan-out-disabled) so an operator can revert at
+        # runtime without a redeploy. Fail-open: never abort startup.
+        try:
+            from backend.services.bybit_rate_gate import get_rate_gate
+            from backend.services.bybit_endpoints import ENDPOINT_PER_SECOND_CAP, validate_registry
+            from backend.services import post_scan_flags
+            validate_registry()  # fail loudly if a private endpoint class lacks a cap
+            _caps = {k: v for k, v in ENDPOINT_PER_SECOND_CAP.items() if v is not None}
+            get_rate_gate().set_endpoint_caps(_caps, per_window=1.0)
+            await post_scan_flags.refresh_from_db(db)  # prime the snapshot once
+
+            async def _refresh_post_scan_flags() -> None:
+                while True:
+                    try:
+                        await asyncio.sleep(15)
+                        await post_scan_flags.refresh_from_db(db)
+                    except asyncio.CancelledError:
+                        break
+                    except Exception:
+                        logger.debug("post_scan_flags_refresh_error", exc_info=True)
+
+            app.state._post_scan_flags_task = asyncio.create_task(_refresh_post_scan_flags())
+        except Exception:
+            logger.warning("post_scan_rate_gate_init_failed", exc_info=True)
+
         # and the scanner (`if self._debug_recorder is not None`) are both designed to
         # tolerate a missing recorder, so a failure here must NEVER abort trading
         # startup — degrade to None and continue, mirroring backtest_service recovery.
@@ -650,6 +678,13 @@ def create_app() -> FastAPI:
             await _watchdog_task
         except asyncio.CancelledError:
             pass
+        _ps_flags_task = getattr(app.state, "_post_scan_flags_task", None)
+        if _ps_flags_task is not None:
+            _ps_flags_task.cancel()
+            try:
+                await _ps_flags_task
+            except asyncio.CancelledError:
+                pass
         await _safe_shutdown("scheduler_service", app.state.scheduler_service.shutdown())
         # Drain the scanner FIRST: an in-flight auto-trade scan places trades THROUGH
         # accounts_service / ai_manager_service, so the producer must be cancelled and

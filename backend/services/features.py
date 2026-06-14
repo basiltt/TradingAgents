@@ -17,8 +17,26 @@ FEATURE_F1 = "f1"
 FEATURE_F2 = "f2"
 FEATURE_F2_LONG = "f2_long"
 
+# Post-scan-optimization REVERT switches. These features ship ACTIVE (no row =
+# active = the corrected behavior); a killed=true row REVERTS to the pre-change
+# behavior at runtime without a redeploy (PR2-2 / FR-009 / FR-040):
+#   rate_gate_channel_fix         -> revert: charge all calls to the private channel
+#   rate_gate_per_endpoint_limiter-> revert: disable the per-account/endpoint sub-limiter
+#   post_scan_fanout_disabled     -> revert: force sequential (width=1) post-scan tail
+FEATURE_RATE_GATE_CHANNEL_FIX = "rate_gate_channel_fix"
+FEATURE_RATE_GATE_PER_ENDPOINT_LIMITER = "rate_gate_per_endpoint_limiter"
+FEATURE_POST_SCAN_FANOUT_DISABLED = "post_scan_fanout_disabled"
+
 KILL_SWITCH_FEATURES: frozenset[str] = frozenset(
-    {FEATURE_ALL, FEATURE_F1, FEATURE_F2, FEATURE_F2_LONG}
+    {
+        FEATURE_ALL,
+        FEATURE_F1,
+        FEATURE_F2,
+        FEATURE_F2_LONG,
+        FEATURE_RATE_GATE_CHANNEL_FIX,
+        FEATURE_RATE_GATE_PER_ENDPOINT_LIMITER,
+        FEATURE_POST_SCAN_FANOUT_DISABLED,
+    }
 )
 
 # Valid strategy cohorts (must match the DB CHECK on trading_accounts.strategy_cohort

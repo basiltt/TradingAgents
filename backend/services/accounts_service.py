@@ -216,7 +216,9 @@ class AccountsService:
                 """Decrypt stored credentials and construct a BybitClient (runs in thread)."""
                 api_key = decrypt_value(creds["api_key_encrypted"])
                 api_secret = decrypt_value(creds["api_secret_encrypted"])
-                return BybitClient(api_key, api_secret, creds["account_type"])
+                # Pass account_id so the rate gate's per-account/endpoint sub-limiter
+                # can key on this account's UID (FR-003/062).
+                return BybitClient(api_key, api_secret, creds["account_type"], account_id=account_id)
 
             client = await asyncio.to_thread(_decrypt_and_create)
             self._clients[account_id] = client

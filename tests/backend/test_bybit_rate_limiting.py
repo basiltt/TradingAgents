@@ -151,6 +151,45 @@ async def test_retry_uses_exponential_backoff(client):
 
 
 @pytest.mark.asyncio
+async def test_per_uid_10006_does_not_trip_global_breaker(client):
+    """A bare 10006 (per-UID/per-endpoint throttle) must NOT trip the process-wide
+    ban breaker — it is recoverable and localized to one account."""
+    from backend.services.bybit_rate_gate import get_rate_gate
+    get_rate_gate().clear_ban()
+    client._time_synced = True
+
+    rate_resp = _make_mock_resp({"retCode": 10006, "retMsg": "too many visits"})
+    rate_ctx = _make_mock_ctx(rate_resp)
+    client._session = _make_mock_session(request_return_value=rate_ctx)
+
+    with patch("asyncio.sleep", new_callable=AsyncMock), pytest.raises(BybitAPIError) as exc_info:
+        await client._request("POST", "/v5/order/create", {"x": 1})
+    assert exc_info.value.ret_code == 10006
+    # The global breaker must NOT be tripped by a per-UID throttle.
+    assert get_rate_gate().ban_cooloff_until is None
+
+
+@pytest.mark.asyncio
+async def test_ip_ban_signal_trips_breaker_with_ban_abort(client):
+    """A genuine IP-ban signal (retCode 10018) trips the breaker and the tripping
+    request raises RateGateBanAbort (uniform ban-aware handling, FR-047)."""
+    from backend.services.bybit_rate_gate import get_rate_gate, RateGateBanAbort
+    get_rate_gate().clear_ban()
+    client._time_synced = True
+
+    ban_resp = _make_mock_resp({"retCode": 10018, "retMsg": "request frequency too high - ip banned"})
+    ban_ctx = _make_mock_ctx(ban_resp)
+    client._session = _make_mock_session(request_return_value=ban_ctx)
+
+    try:
+        with patch("asyncio.sleep", new_callable=AsyncMock), pytest.raises(RateGateBanAbort):
+            await client._request("POST", "/v5/order/create", {"x": 1})
+        assert get_rate_gate().ban_cooloff_until is not None
+    finally:
+        get_rate_gate().clear_ban()
+
+
+@pytest.mark.asyncio
 async def test_non_rate_limit_error_not_retried(client):
     client._time_synced = True
 
