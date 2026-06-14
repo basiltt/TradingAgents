@@ -501,6 +501,13 @@ class AutoTradeConfig(BaseModel):
     trailing_profit_pct: Optional[float] = Field(None, gt=0, le=50)
     max_same_direction: Optional[int] = Field(None, ge=1, le=20)
     max_price_drift_pct: Optional[float] = Field(None, gt=0, le=50)
+    # FIX-005 signal-quality gates (backtest-proven, generalize across samples).
+    # require_trend_alignment: only trade WITH the 1h+4h trend (short needs both down,
+    #   long needs both up). Counter-trend signals won ~39% vs ~56% aligned.
+    # block_falling_knife: veto SHORTs into a crashed+oversold/on-support coin (the
+    #   dead-cat-bounce trap, e.g. ESPORTS — these won ~36%).
+    require_trend_alignment: bool = False
+    block_falling_knife: bool = False
     max_same_sector: Optional[int] = Field(None, ge=1, le=10)
     adaptive_blacklist_enabled: bool = False
     adaptive_blacklist_min_trades: int = Field(default=5, ge=2, le=50)

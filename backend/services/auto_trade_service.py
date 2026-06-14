@@ -125,6 +125,27 @@ class AutoTradeExecutor:
         """fetcher(symbol, interval, depth) -> list[kline]; used for the lazy MR mean."""
         self._mean_fetcher = fetcher
 
+    async def _sq_klines(self, symbol: str, interval: str, depth: int) -> list:
+        """Fetch klines for the FIX-005 signal-quality gates, cached per-scan per
+        (symbol, interval). Reuses the same fetcher as the MR mean. Returns [] (fail-open)
+        when no fetcher is wired or the fetch raises — the gates treat [] as
+        insufficient-data and ALLOW the trade, so a fetch problem never blocks trading."""
+        fetcher = getattr(self, "_mean_fetcher", None)
+        if fetcher is None:
+            return []
+        cache = getattr(self, "_sq_kline_cache", None)
+        if cache is None:
+            cache = self._sq_kline_cache = {}
+        key = (symbol, interval, depth)
+        if key in cache:
+            return cache[key]
+        try:
+            kl = await fetcher(symbol, interval, depth)
+        except Exception:
+            kl = []
+        cache[key] = kl or []
+        return cache[key]
+
     async def _lazy_mr_mean(self, symbol: str, period: int, interval: str):
         """Compute (and per-scan cache) the EMA mean for an MR symbol when the
         scan-init ScanContext didn't precompute it (IR1). One fetch per
@@ -204,6 +225,7 @@ class AutoTradeExecutor:
         self._state.clear()
         self._mr_mean_cache = {}   # reset the per-scan MR mean cache (IR1)
         self._mr_price_cache = {}  # reset the per-scan MR mark-price cache (P2)
+        self._sq_kline_cache = {}  # reset the per-scan signal-quality kline cache (FIX-005)
         for i, cfg in enumerate(configs):
             key = f"{cfg['account_id']}_{i}"
             self._state[key] = _AccountState(config=cfg)
@@ -2129,6 +2151,36 @@ class AutoTradeExecutor:
                     return None
             except Exception:
                 pass  # fail-open: proceed with trade if price check fails
+
+        # FIX-005 signal-quality gates: skip counter-trend and falling-knife signals.
+        # Backtest-proven (signal_research/) to lift win-rate ~60.7%->67.4% and generalize.
+        # Deterministic -> same signal always yields the same decision. SKIPPED for MR
+        # (mr_fade): MR places on the fade side, decoupled from the signal direction, so
+        # a signal-direction trend/knife check would gate the wrong axis. Both gates
+        # FAIL OPEN: any data/compute problem proceeds with the trade (never block on error).
+        want_trend = bool(cfg.get("require_trend_alignment"))
+        want_knife = bool(cfg.get("block_falling_knife"))
+        if (want_trend or want_knife) and not mr_fade and not relaxed:
+            try:
+                from backend.services import signal_quality_filter as _sqf
+                if want_trend:
+                    kl_1h = await self._sq_klines(symbol, "60", 60)
+                    kl_4h = await self._sq_klines(symbol, "240", 60)
+                    aligned = _sqf.trend_aligned(direction, kl_1h, kl_4h)
+                    if aligned is False:  # None == fail-open (insufficient data) -> allow
+                        self._emit_decision(account_id, phase, symbol, "skipped",
+                                            "counter_trend", result)
+                        state.trades_skipped += 1
+                        return None
+                if want_knife:
+                    kl_5m = await self._sq_klines(symbol, "5", 300)
+                    if _sqf.is_falling_knife_short(direction, kl_5m):
+                        self._emit_decision(account_id, phase, symbol, "skipped",
+                                            "falling_knife", result)
+                        state.trades_skipped += 1
+                        return None
+            except Exception:
+                pass  # fail-open: never block a trade because a quality check errored
 
         # Execute trade under the shared per-(account,symbol) lock so the AI
         # manager / close loop cannot act on this symbol mid-placement, and

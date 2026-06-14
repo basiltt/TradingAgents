@@ -19,7 +19,7 @@ The "name starts with U" hypothesis was tested and **refuted**.
 | Emergency close omitted ESPORTS (WS buffer race) | [FIX-002](../../fixes/FIX-002-emergency-orphan-race.md) | Critical | **fixed** | Exchange-snapshot union + execution_result persisted |
 | 3% loss cap blocked standard-path close of ESPORTS | [FIX-003](../../fixes/FIX-003-ai-3pct-loss-cap.md) | Critical | **fixed** | New hard cap (max_position_loss_pct=8%) force-closes big losers |
 | Post-emergency disarm left loser unprotected | [FIX-004](../../fixes/FIX-004-emergency-rearm-gap.md) | High | **fixed** | Ref-equity reseed floored by open losses (+ FIX-003 backstop) |
-| Counter-trend / oversold-bounce short signal | [FIX-005](../../fixes/FIX-005-short-bounce-signal-guard.md) | High | identified | MiniMax replay said No-Trade |
+| Counter-trend / oversold-bounce short signal | [FIX-005](../../fixes/FIX-005-short-bounce-signal-guard.md) | High | **fixed** | Deterministic trend-align + falling-knife filter (backtest +6.7pt win) |
 
 ## Hypotheses tested
 | Hypothesis | Verdict | Evidence |

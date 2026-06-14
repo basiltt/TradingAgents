@@ -827,3 +827,132 @@ async def test_fill_preserves_max_trades_reached_reason_when_full():
     assert state.stopped_reason == "max_trades_reached", (
         f"fully-filled account lost its stop reason: {state.stopped_reason}"
     )
+
+
+# ── FIX-005 signal-quality gates (counter-trend + falling-knife) ────────────────
+
+def _rising_klines(n=60):
+    return [{"o": float(i), "h": float(i) * 1.001, "l": float(i) * 0.999,
+             "c": float(i), "v": 100.0} for i in range(1, n + 1)]
+
+def _falling_klines(n=60):
+    return [{"o": float(i), "h": float(i) * 1.001, "l": float(i) * 0.999,
+             "c": float(i), "v": 100.0} for i in range(n, 0, -1)]
+
+
+@pytest.mark.asyncio
+async def test_try_trade_skips_counter_trend_short():
+    """require_trend_alignment: a SHORT while the 1h+4h trend is UP is counter-trend
+    and must be skipped with reason 'counter_trend'."""
+    from backend.services.auto_trade_service import AutoTradeExecutor, _AccountState
+    rec = MagicMock()
+    ex = AutoTradeExecutor(AsyncMock(), None, recorder=rec, debug_ctx=object())
+    ex.init_configs([])  # reset per-scan caches
+    # fetcher returns a RISING series for any interval -> trend 'up' -> short is counter-trend
+    ex.set_mean_fetcher(AsyncMock(return_value=_rising_klines()))
+    state = _AccountState(config={
+        "account_id": "acc_1", "min_score": 0, "confidence_filter": "any",
+        "execution_mode": "batch", "require_trend_alignment": True,
+    })
+    state.base_capital = 1000.0
+    result = {"status": "completed", "ticker": "FOO", "direction": "sell",
+              "confidence": "high", "score": -8}
+    out = await ex._try_trade(state, result, phase="batch")
+    assert out is None
+    reasons = [c.kwargs.get("reason_code") for c in rec.emit_symbol_decision.call_args_list]
+    assert "counter_trend" in reasons
+
+
+@pytest.mark.asyncio
+async def test_try_trade_allows_trend_aligned_short_through_gate():
+    """A SHORT while 1h+4h trend is DOWN passes the trend gate (not skipped for
+    counter_trend). It may still be skipped later for other reasons, but NOT this one."""
+    from backend.services.auto_trade_service import AutoTradeExecutor, _AccountState
+    rec = MagicMock()
+    accounts = AsyncMock()
+    accounts.get_mark_price.return_value = 100.0
+    ex = AutoTradeExecutor(accounts, None, recorder=rec, debug_ctx=object())
+    ex.init_configs([])
+    ex.set_mean_fetcher(AsyncMock(return_value=_falling_klines()))  # trend 'down'
+    state = _AccountState(config={
+        "account_id": "acc_1", "min_score": 0, "confidence_filter": "any",
+        "execution_mode": "batch", "require_trend_alignment": True,
+    })
+    state.base_capital = 1000.0
+    result = {"status": "completed", "ticker": "FOO", "direction": "sell",
+              "confidence": "high", "score": -8}
+    await ex._try_trade(state, result, phase="batch")
+    reasons = [c.kwargs.get("reason_code") for c in rec.emit_symbol_decision.call_args_list]
+    assert "counter_trend" not in reasons
+
+
+@pytest.mark.asyncio
+async def test_try_trade_skips_falling_knife_short():
+    """block_falling_knife: a SHORT into a crashed+oversold coin is skipped with
+    reason 'falling_knife'."""
+    from backend.services.auto_trade_service import AutoTradeExecutor, _AccountState
+    rec = MagicMock()
+    ex = AutoTradeExecutor(AsyncMock(), None, recorder=rec, debug_ctx=object())
+    ex.init_configs([])
+    # a deep, steady crash to the low -> crashed_24h + oversold/on-support
+    crash = [{"o": 100.0, "h": 100.1, "l": 99.9, "c": 100.0, "v": 100.0} for _ in range(10)]
+    crash += [{"o": float(100 - i), "h": float(100 - i) + 0.1, "l": float(100 - i) - 0.1,
+               "c": float(100 - i), "v": 100.0} for i in range(0, 70)]
+    ex.set_mean_fetcher(AsyncMock(return_value=crash))
+    state = _AccountState(config={
+        "account_id": "acc_1", "min_score": 0, "confidence_filter": "any",
+        "execution_mode": "batch", "block_falling_knife": True,
+    })
+    state.base_capital = 1000.0
+    result = {"status": "completed", "ticker": "FOO", "direction": "sell",
+              "confidence": "high", "score": -8}
+    out = await ex._try_trade(state, result, phase="batch")
+    assert out is None
+    reasons = [c.kwargs.get("reason_code") for c in rec.emit_symbol_decision.call_args_list]
+    assert "falling_knife" in reasons
+
+
+@pytest.mark.asyncio
+async def test_quality_gates_fail_open_without_fetcher():
+    """No kline fetcher wired -> gates fail open (no counter_trend/falling_knife skip)."""
+    from backend.services.auto_trade_service import AutoTradeExecutor, _AccountState
+    rec = MagicMock()
+    accounts = AsyncMock()
+    accounts.get_mark_price.return_value = 100.0
+    ex = AutoTradeExecutor(accounts, None, recorder=rec, debug_ctx=object())
+    ex.init_configs([])
+    # deliberately NO set_mean_fetcher -> _sq_klines returns [] -> gates allow
+    state = _AccountState(config={
+        "account_id": "acc_1", "min_score": 0, "confidence_filter": "any",
+        "execution_mode": "batch", "require_trend_alignment": True, "block_falling_knife": True,
+    })
+    state.base_capital = 1000.0
+    result = {"status": "completed", "ticker": "FOO", "direction": "sell",
+              "confidence": "high", "score": -8}
+    await ex._try_trade(state, result, phase="batch")
+    reasons = [c.kwargs.get("reason_code") for c in rec.emit_symbol_decision.call_args_list]
+    assert "counter_trend" not in reasons and "falling_knife" not in reasons
+
+
+@pytest.mark.asyncio
+async def test_quality_gates_disabled_by_default():
+    """With neither knob set, the gates don't run at all (no kline fetch needed)."""
+    from backend.services.auto_trade_service import AutoTradeExecutor, _AccountState
+    rec = MagicMock()
+    accounts = AsyncMock()
+    accounts.get_mark_price.return_value = 100.0
+    ex = AutoTradeExecutor(accounts, None, recorder=rec, debug_ctx=object())
+    ex.init_configs([])
+    fetcher = AsyncMock(return_value=_rising_klines())
+    ex.set_mean_fetcher(fetcher)
+    state = _AccountState(config={
+        "account_id": "acc_1", "min_score": 0, "confidence_filter": "any",
+        "execution_mode": "batch",  # no require_trend_alignment / block_falling_knife
+    })
+    state.base_capital = 1000.0
+    result = {"status": "completed", "ticker": "FOO", "direction": "sell",
+              "confidence": "high", "score": -8}
+    await ex._try_trade(state, result, phase="batch")
+    reasons = [c.kwargs.get("reason_code") for c in rec.emit_symbol_decision.call_args_list]
+    assert "counter_trend" not in reasons and "falling_knife" not in reasons
+    fetcher.assert_not_called()  # gates skipped entirely -> no kline fetch

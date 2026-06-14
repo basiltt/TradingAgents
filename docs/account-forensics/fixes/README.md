@@ -24,7 +24,7 @@ relevant entry rather than duplicating it.
 | [FIX-002](FIX-002-emergency-orphan-race.md) | Emergency "close all losers" reads a racy WS buffer mid-cascade → omits a still-open loser | Critical | **fixed** | Unni | system-wide (any AI-managed account) |
 | [FIX-003](FIX-003-ai-3pct-loss-cap.md) | Big-but-calm losers never closed: `max_single_decision_loss_pct=3%` skips them before the LLM, with no force-close backstop | Critical | **fixed** | Unni | system-wide (AI-managed) |
 | [FIX-004](FIX-004-emergency-rearm-gap.md) | Post-emergency ref-equity reset + cooldown + circuit breaker can fully disarm protection while a large loser is still open | High | **fixed** | Unni | system-wide (AI-managed) |
-| [FIX-005](FIX-005-short-bounce-signal-guard.md) | Structured signal shorts oversold/bounce-prone coins; MiniMax replay disagreed 5/7, flagging reversal risk | High (signal quality) | identified | Unni | system-wide (all accounts) |
+| [FIX-005](FIX-005-short-bounce-signal-guard.md) | Structured signal shorts oversold/bounce-prone coins; counter-trend + falling-knife shorts lose | High (signal quality) | **fixed** | Unni | system-wide (all accounts) |
 
 ## Notes
 - Severity reflects blast radius + dollar impact, not effort.

@@ -1,6 +1,6 @@
 # FIX-005 — Structured signal shorts oversold/bounce-prone coins
 
-**Status:** identified
+**Status:** fixed (2026-06-14) — deterministic trade-selection filter shipped, backtest-validated
 **Severity:** High (signal quality)
 **First seen:** Unni investigation (2026-06-14)
 **Accounts affected:** system-wide (signal generation — all accounts that trade these signals)
@@ -36,26 +36,46 @@ structured-signal route) shorts on short-term EMA alignment without sufficiently
 mean-reversion/bounce risk on already-stretched, oversold, beaten-down coins. Counter-trend
 shorts (B3 had EMA9>EMA21, RSI 60.8, +4.3%/24h) also slipped through.
 
-## Fix approach (proposed)
-1. Add a **bounce/mean-reversion guard** to short signals: penalize or veto shorts on coins
-   already down more than X% in 24h, sitting on/near support, with RSI < ~35.
-2. Require a **confirmed breakdown** (close below a defined support level) rather than mere
-   EMA alignment before a high-conviction short on a crashed coin.
-3. Consider surfacing a `reversal_risk` field in the structured signal so downstream gates can
-   filter — the production model already reasons about it when asked.
+## Fix (implemented) — a deterministic trade-selection filter
+A full research program (`work/FIX-005/RESEARCH.md`) built an offline backtest harness over real
+local signal data (no lookahead), replayed signals through the **production model**
+(MiniMax-M2.7-highspeed), and scored outcomes against ground truth on two disjoint samples.
 
-> Caveat: this is a signal-*quality* contributor, not the proximate cause of Unni's $19 loss
-> (that was the exit machinery — FIX-002/003/004). But it set up the bad trade, and it recurs
-> across accounts (Jerin lost on the same MEGA/ARIA/FOLKS counter-trend shorts). LLMs are
-> non-deterministic and the replay used a distilled single-prompt rubric, so treat the
-> *direction* of the finding as robust, not exact scores.
+**Key research finding:** changing signal *generation* via LLM prompts **did not generalize** —
+lean prompts that looked great on one sample (dir-PnL +1.195%) collapsed on held-out data
+(−1.176%), and LLM calls were only ~63% reproducible. What DID generalize was a **deterministic
+filter on the existing signals**, using three properties that predict outcomes consistently
+across both samples:
+- **score tier**: score8+ wins ~70-73% (vs score6 ~55-57%).
+- **trend alignment**: shorts WITH the 1h+4h downtrend won 56% vs 39% counter-trend.
+- **falling-knife veto**: shorts into a crashed (24h≤-15%) + oversold/on-support coin won 36%
+  (the exact ESPORTS trap).
 
-## Verification plan
-- Re-run the replay harness (skill Stage 4) on a future scan; measure short-signal agreement and
-  the rate of HIGH-reversal-risk shorts before/after the guard.
-- Backtest the guard over historical scans: does vetoing high-reversal shorts improve net PnL?
+Combined (min_score≥6 + trend-aligned + no-falling-knife): win **60.7%→67.4%**, dir-acc
+**57.6%→63.3%**, generalizing across both seeds (58→62.5% and 63.3→70.1%). Deterministic ⇒
+**100% reproducible** (same signal → same decision).
+
+Shipped as a **trade-selection filter** (not a generation change):
+- `backend/services/signal_quality_filter.py` — pure, fail-open `trend_aligned`,
+  `is_falling_knife_short`.
+- Gates in `auto_trade_service._try_trade` emitting `counter_trend` / `falling_knife` skips
+  (per-scan kline cache; fail-open on any error so a data glitch never blocks trading).
+- Opt-in `AutoTradeConfig` knobs (default **off**, non-breaking): `require_trend_alignment`,
+  `block_falling_knife`.
+- Tests: `tests/backend/test_signal_quality_filter.py` (12) + 5 gate integration tests in
+  `test_auto_trade_service_unit.py`. 44 pass.
+
+> Note: the original "fix approach" proposed editing the LLM prompt; the research showed that
+> over-abstains and doesn't generalize, so we filter deterministically instead. The prompt-side
+> upside (richer features into the multi-agent debate) remains a future option — see RESEARCH.md.
+
+## Verification — done
+- ✅ Backtest: combined filter lifts win-rate +6.7pts and dir-acc +5.7pts, on BOTH held-out samples.
+- ✅ Production filter functions reproduce the lift end-to-end (58→62.5%, 63.3→70.1%).
+- ✅ Deterministic ⇒ reproducible by construction. Unit + integration tests pass; gates fail-open.
 
 ## Cross-references
+- Full research record: `work/FIX-005/RESEARCH.md`
 - Account findings: `../accounts/unni/FINDINGS.md`
 - Evidence: `../accounts/unni/REPORT.md` §4 (LLM signal replay)
-- Tooling: `investigate-account` skill Stage 4 (`s4_llm_replay.py`)
+- Code: `backend/services/signal_quality_filter.py`, `auto_trade_service._try_trade`
