@@ -1,0 +1,15 @@
+import sys; sys.path.insert(0, ".")
+from _prod import prod_query, prod_one, run, p, ACCT
+p("Unni ESPORTS row NOW")
+r = run(prod_one("select symbol,status,close_reason,exit_price,net_pnl,realized_pnl,fees from trades where account_id=$1 and symbol='ESPORTSUSDT'", ACCT))
+for k,v in r.items(): print(f"  {k}: {v}")
+p("Unni LEDGER vs EQUITY reconciliation (the FIX-001 goal)")
+led = run(prod_one("select round(sum(coalesce(net_pnl,0))::numeric,2) net, count(*) n from trades where account_id=$1 and status='closed'", ACCT))
+hf = run(prod_query("select round(equity::numeric,2) eq from high_freq_snapshots where account_id=$1 order by ts asc", ACCT))
+print(f"  ledger net_pnl sum (closed): {led['net']}  over {led['n']} trades")
+if hf:
+    print(f"  equity: first={hf[0]['eq']} last={hf[-1]['eq']} change={float(hf[-1]['eq'])-float(hf[0]['eq']):+.2f}")
+    print(f"  (before fix: ledger was -1.64 vs equity -21.3 → gap ~19; now ledger should ~match)")
+p("System-wide: any remaining external+zero rows?")
+z = run(prod_one("select count(*) c from trades where status='closed' and exit_price=0 and close_reason='external'"))
+print(f"  remaining external/exit=0 rows across ALL accounts: {z['c']}")

@@ -42,7 +42,7 @@ docs/account-forensics/
 
 | ID | Issue | Severity | Status |
 |----|-------|----------|--------|
-| [FIX-001](fixes/FIX-001-reconciler-pnl-zero.md) | Reconciler `external` close writes `net_pnl=0` (hides real losses) | High | identified |
+| [FIX-001](fixes/FIX-001-reconciler-pnl-zero.md) | Reconciler closed-PnL window excludes records whose `createdTime` predates `opened_at` (hides real losses) | High | **fixed** |
 | [FIX-002](fixes/FIX-002-emergency-orphan-race.md) | Emergency close omits a still-open loser (WS buffer race) | Critical | identified |
 | [FIX-003](fixes/FIX-003-ai-3pct-loss-cap.md) | 3% loss cap blocks closing the biggest losers | Critical | identified |
 | [FIX-004](fixes/FIX-004-emergency-rearm-gap.md) | Post-emergency disarm leaves a large loser unprotected | High | identified |

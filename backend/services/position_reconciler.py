@@ -22,6 +22,17 @@ _API_CALL_DELAY_S = 0.25
 # deep enough (50 × 100 = 5000 records) that a busy account's older closes still
 # surface — mirrors accounts_service._fetch_and_store_closed_pnl's max_pages.
 _MAX_CLOSED_PNL_PAGES = 50
+# Pad the closed-PnL lookup window START backward by this much. Bybit timestamps a
+# closed-PnL record's createdTime at POSITION-OPEN time, which can be a few seconds
+# BEFORE our DB's opened_at (clock skew between Bybit's position-create and our
+# fill-record write). Bybit's /v5/position/closed-pnl filters by createdTime within
+# [startTime, endTime], so a window starting exactly at opened_at silently EXCLUDES
+# the record — the match then fails on every retry and the trade stays net_pnl=0
+# forever (the Unni/Brother ESPORTS bug, FIX-001). 10 minutes comfortably covers the
+# observed skew (~8s) without widening the window enough to mismatch a different close
+# of the same (symbol, side) — those are still disambiguated by the newest-updatedTime
+# pick in _fetch_closed_pnl_match.
+_CLOSED_PNL_WINDOW_PAD_MS = 10 * 60 * 1000
 
 
 class PositionReconciler:
@@ -284,7 +295,10 @@ class PositionReconciler:
         side = trade["side"]
 
         opened_at = trade.get("opened_at") or trade.get("created_at")
-        start_ms = int(opened_at.timestamp() * 1000) if opened_at else 0
+        # Pad the window start backward: Bybit's closed-PnL createdTime can predate
+        # our opened_at by a few seconds, and the endpoint filters by createdTime, so
+        # an unpadded start_ms=opened_at excludes the very record we need (FIX-001).
+        start_ms = (int(opened_at.timestamp() * 1000) - _CLOSED_PNL_WINDOW_PAD_MS) if opened_at else 0
         end_ms = int(time.time() * 1000)
 
         pnl_record = await self._fetch_closed_pnl_match(

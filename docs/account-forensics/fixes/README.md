@@ -20,7 +20,7 @@ relevant entry rather than duplicating it.
 
 | ID | Issue | Severity | Status | First seen | Accounts affected |
 |----|-------|----------|--------|-----------|-------------------|
-| [FIX-001](FIX-001-reconciler-pnl-zero.md) | Reconciler `external` close writes `net_pnl=0`, hiding real losses from the ledger | High (data integrity) | identified | Unni | Unni, Brother, Sister, Appu (any `external`-closed trade) |
+| [FIX-001](FIX-001-reconciler-pnl-zero.md) | Reconciler closed-PnL lookup window starts at `opened_at`, excluding records whose Bybit `createdTime` predates it → loss booked as `net_pnl=0` | High (data integrity) | **fixed** | Unni | Unni, Brother (both backfilled) |
 | [FIX-002](FIX-002-emergency-orphan-race.md) | Emergency "close all losers" reads a racy WS buffer mid-cascade → omits a still-open loser | Critical | identified | Unni | system-wide (any AI-managed account) |
 | [FIX-003](FIX-003-ai-3pct-loss-cap.md) | `max_single_decision_loss_pct=3%` blocks the AI manager from closing the *biggest* losers in the standard path | Critical | identified | Unni | system-wide (AI-managed) |
 | [FIX-004](FIX-004-emergency-rearm-gap.md) | Post-emergency ref-equity reset + cooldown + circuit breaker can fully disarm protection while a large loser is still open | High | identified | Unni | system-wide (AI-managed) |
