@@ -19,7 +19,7 @@ The "name starts with U" hypothesis was tested and **refuted**.
 | Emergency close omitted ESPORTS (WS buffer race) | [FIX-002](../../fixes/FIX-002-emergency-orphan-race.md) | Critical | **fixed** | Exchange-snapshot union + execution_result persisted |
 | 3% loss cap blocked standard-path close of ESPORTS | [FIX-003](../../fixes/FIX-003-ai-3pct-loss-cap.md) | Critical | **fixed** | New hard cap (max_position_loss_pct=8%) force-closes big losers |
 | Post-emergency disarm left loser unprotected | [FIX-004](../../fixes/FIX-004-emergency-rearm-gap.md) | High | **fixed** | Ref-equity reseed floored by open losses (+ FIX-003 backstop) |
-| Counter-trend / oversold-bounce short signal | [FIX-005](../../fixes/FIX-005-short-bounce-signal-guard.md) | High | **fixed** | Deterministic trend-align + falling-knife filter (backtest +6.7pt win) |
+| Counter-trend / oversold-bounce short signal | [FIX-005](../../fixes/FIX-005-short-bounce-signal-guard.md) | High | **fixed** | Deterministic trend-align + falling-knife filter (backtest +6.7pt win); shipped end-to-end as the "Best Winrate" preset + tight geometry; live gate interval bug fixed ([CHANGELOG](../../fixes/work/FIX-005/CHANGELOG.md)) |
 
 ## Hypotheses tested
 | Hypothesis | Verdict | Evidence |
@@ -35,5 +35,8 @@ The "name starts with U" hypothesis was tested and **refuted**.
 | **Total (equity)** | **≈ −$21.3** |
 
 ## Status rollup
-All 5 issues are **identified**, none fixed yet. Track remediation in the
-[fixes ledger](../../fixes/README.md). Update the Status column above as each FIX progresses.
+All 5 issues are **fixed** (implemented + tested locally; not yet prod-verified). FIX-005 was
+additionally **productized** end-to-end (the "Best Winrate" preset + backtest wiring) and a live
+gate interval bug was fixed — see [`work/FIX-005/CHANGELOG.md`](../../fixes/work/FIX-005/CHANGELOG.md).
+Track remediation in the [fixes ledger](../../fixes/README.md); update the Status column above as
+each FIX is verified in production.
