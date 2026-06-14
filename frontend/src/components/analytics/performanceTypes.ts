@@ -101,3 +101,16 @@ export interface TradesPage {
   cursor: string | null;
   has_more: boolean;
 }
+
+// ── Signals tab (Phase 4) ────────────────────────────────────────────────────
+export interface SignalSummary {
+  total_trades: number;
+  win_rate: number;
+  avg_pnl_pct: number;
+  total_pnl: number;
+  avg_hold_minutes: number;
+  current_streak: number;
+  active_alerts: number;
+}
+export interface WinRatePoint { date: string | null; win_rate: number; trade_number: number; }
+export type SignalWinRate = WinRatePoint[];

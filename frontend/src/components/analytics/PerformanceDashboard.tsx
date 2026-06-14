@@ -7,6 +7,7 @@ import { PerformanceControlBar } from "./PerformanceControlBar";
 import { PerformanceHeroStrip } from "./PerformanceHeroStrip";
 import { OverviewTab } from "./tabs/OverviewTab";
 import { TradesTab } from "./tabs/TradesTab";
+import { SignalsTab } from "./tabs/SignalsTab";
 import type { PerformanceTimeframe } from "./performanceTypes";
 
 interface Props { embedded?: boolean; accountId?: string; }
@@ -89,6 +90,7 @@ export function PerformanceDashboard({ embedded = false, accountId }: Props) {
               items={[
                 { value: "overview", label: "Overview", content: <OverviewTab overview={data} /> },
                 { value: "trades", label: "Trades", content: <TradesTab scope={effectiveScope} timeframe={timeframe} /> },
+                { value: "signals", label: "Signals", content: <SignalsTab scope={effectiveScope} /> },
               ]}
             />
           ) : (

@@ -12,7 +12,7 @@ import type {
   TradeStatsResponse,
   TradeEventsResponse,
 } from "@/components/trades/types";
-import type { PerformanceOverview, TradesBreakdown, TradesPage } from "@/components/analytics/performanceTypes";
+import type { PerformanceOverview, TradesBreakdown, TradesPage, SignalSummary, SignalWinRate } from "@/components/analytics/performanceTypes";
 import type {
   BacktestRun,
   BacktestCreateRequest,
@@ -978,6 +978,27 @@ export const performanceApi = {
       }),
       undefined,
       signal,
+    ),
+};
+
+/**
+ * Signal-analytics API, scope-aware. The backend endpoints take a single optional
+ * account_id: scope "all"/"live"/"demo" omit it (all accounts); a concrete account id
+ * is passed through. (Per-type live/demo fan-out is a documented v1 simplification.)
+ */
+function _signalAccountId(scope: string): string | undefined {
+  return scope === "all" || scope === "live" || scope === "demo" ? undefined : scope;
+}
+export const signalAnalyticsApi = {
+  summary: (scope: string, signal?: AbortSignal) =>
+    request<SignalSummary>(
+      buildQuery("/api/v1/signal-analytics/summary", { account_id: _signalAccountId(scope) }),
+      undefined, signal,
+    ),
+  winRate: (scope: string, signal?: AbortSignal) =>
+    request<SignalWinRate>(
+      buildQuery("/api/v1/signal-analytics/win-rate", { account_id: _signalAccountId(scope) }),
+      undefined, signal,
     ),
 };
 

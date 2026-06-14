@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { performanceApi } from "@/api/client";
+import { performanceApi, signalAnalyticsApi } from "@/api/client";
 
 export const performanceKeys = {
   overview: (scope: string, timeframe: string) =>
@@ -8,6 +8,8 @@ export const performanceKeys = {
     ["performance-breakdown", scope, timeframe] as const,
   trades: (scope: string, timeframe: string, sort: string, dir: string) =>
     ["performance-trades", scope, timeframe, sort, dir] as const,
+  signalSummary: (scope: string) => ["performance-signals", "summary", scope] as const,
+  signalWinRate: (scope: string) => ["performance-signals", "win-rate", scope] as const,
 };
 
 export function usePerformanceOverview(scope: string, timeframe: string) {
@@ -34,6 +36,22 @@ export function useTradesPage(
     queryKey: [...performanceKeys.trades(scope, timeframe, sort, dir), cursor ?? ""],
     queryFn: ({ signal }) =>
       performanceApi.getTradesPage(scope, timeframe, { sort, dir, cursor, limit: 50 }, signal),
+    staleTime: 60_000,
+  });
+}
+
+export function useSignalSummary(scope: string) {
+  return useQuery({
+    queryKey: performanceKeys.signalSummary(scope),
+    queryFn: ({ signal }) => signalAnalyticsApi.summary(scope, signal),
+    staleTime: 60_000,
+  });
+}
+
+export function useSignalWinRate(scope: string) {
+  return useQuery({
+    queryKey: performanceKeys.signalWinRate(scope),
+    queryFn: ({ signal }) => signalAnalyticsApi.winRate(scope, signal),
     staleTime: 60_000,
   });
 }
