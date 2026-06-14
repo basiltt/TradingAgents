@@ -2891,6 +2891,72 @@ class AsyncAnalysisDB:
         rows = await self.pool.fetch(sql, *params)
         return [r["id"] for r in rows]
 
+    async def get_performance_trades_page(
+        self, *, account_ids: list[str] | None = None,
+        account_type: str | None = None,
+        start: "datetime | None" = None, end: "datetime | None" = None,
+        sort: str = "net_pnl", direction: str = "desc",
+        cursor: tuple | None = None, limit: int = 50,
+    ) -> tuple[list[dict], tuple | None, bool]:
+        """Keyset-paginated raw trade rows for the Trades tab.
+
+        Stable ordering: ``ORDER BY <sort-expr> <dir>, id <dir>`` with NULL net_pnl coerced
+        via COALESCE so it can never skip/duplicate rows. The cursor is a (sort_value, id)
+        tuple; rows strictly after it (in the sort direction) are returned. Returns
+        (rows, next_cursor, has_more).
+        """
+        # whitelist sort columns -> SQL expressions (COALESCE the nullable money field)
+        sort_exprs = {
+            "net_pnl": "COALESCE(t.net_pnl, '-Infinity'::numeric)",
+            "closed_at": "t.closed_at",
+        }
+        expr = sort_exprs.get(sort, sort_exprs["net_pnl"])
+        desc = direction.lower() != "asc"
+        order = "DESC" if desc else "ASC"
+        cmp = "<" if desc else ">"
+
+        sql = (
+            "SELECT t.id, t.account_id, t.symbol, t.side, t.net_pnl, t.realized_pnl_pct, "
+            "t.base_capital, t.close_reason, t.strategy_kind, t.opened_at, t.closed_at, t.leverage "
+            "FROM trades t JOIN trading_accounts ta ON ta.id = t.account_id "
+            "WHERE t.status = 'closed' AND t.closed_at IS NOT NULL AND t.exit_price > 0 "
+            "AND ta.deleted_at IS NULL AND ta.is_active = 1 AND ta.include_in_analytics = TRUE "
+        )
+        params: list = []
+        if account_ids is not None:
+            params.append(account_ids)
+            sql += f"AND t.account_id = ANY(${len(params)}) "
+        if account_type:
+            params.append(account_type)
+            sql += f"AND ta.account_type = ${len(params)} "
+        if start is not None:
+            params.append(start)
+            sql += f"AND t.closed_at >= ${len(params)} "
+        if end is not None:
+            params.append(end)
+            sql += f"AND t.closed_at < ${len(params)} "
+        if cursor is not None:
+            sort_val, last_id = cursor
+            params.append(sort_val)
+            sv = f"${len(params)}"
+            params.append(last_id)
+            lid = f"${len(params)}"
+            # row-value keyset: (expr, id) strictly after the cursor in sort order
+            sql += f"AND ({expr}, t.id) {cmp} ({sv}, {lid}) "
+        params.append(limit + 1)  # fetch one extra to detect has_more
+        sql += f"ORDER BY {expr} {order}, t.id {order} LIMIT ${len(params)}"
+
+        rows = [dict(r) for r in await self.pool.fetch(sql, *params)]
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        next_cursor: tuple | None = None
+        if has_more and rows:
+            last = rows[-1]
+            sv = float(last["net_pnl"]) if last["net_pnl"] is not None else float("-inf")
+            sort_value = sv if sort == "net_pnl" else last["closed_at"].isoformat()
+            next_cursor = (sort_value, last["id"])
+        return rows, next_cursor, has_more
+
     async def get_latest_snapshot(self, account_id: str) -> Optional[Dict[str, Any]]:
         """Return an account's most recent daily snapshot, or None if none exist."""
         row = await self.pool.fetchrow(

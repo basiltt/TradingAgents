@@ -380,3 +380,39 @@ class TestComputeBreakdowns:
         from backend.services.performance_service import compute_breakdowns
         b = compute_breakdowns([])
         assert "strategy_legacy_approximate" in b["meta"]
+
+
+class TestComputeTradesPage:
+    @pytest.mark.asyncio
+    async def test_paginates_and_shapes_rows(self):
+        from unittest.mock import AsyncMock, MagicMock
+        from backend.services.performance_service import PerformanceService
+
+        anchor = datetime(2026, 6, 14, 12, tzinfo=timezone.utc)
+        rows = [
+            {"id": "t1", "symbol": "BTCUSDT", "side": "Buy", "net_pnl": 5.0,
+             "base_capital": 100.0, "close_reason": "take_profit",
+             "opened_at": datetime(2026, 5, 1, 8, tzinfo=timezone.utc),
+             "closed_at": datetime(2026, 5, 1, 14, tzinfo=timezone.utc)},
+            {"id": "t2", "symbol": "ETHUSDT", "side": "Sell", "net_pnl": None,
+             "base_capital": None, "close_reason": "external",
+             "opened_at": None,
+             "closed_at": datetime(2026, 5, 2, 9, tzinfo=timezone.utc)},
+        ]
+        db = MagicMock()
+        db.get_scope_account_ids = AsyncMock(return_value=["a1"])
+        db.get_performance_trades_page = AsyncMock(return_value=(rows, "nextcur", True))
+        svc = PerformanceService(db=db, accounts_service=None)
+        res = await svc.compute_trades_page(scope="all", timeframe="ALL", anchor=anchor,
+                                            sort="net_pnl", direction="desc", cursor=None, limit=50)
+        assert res["cursor"] == "nextcur"
+        assert res["has_more"] is True
+        r0 = res["rows"][0]
+        assert r0["id"] == "t1"
+        assert r0["net_pnl"] == pytest.approx(5.0)
+        assert r0["net_pnl_pct"] == pytest.approx(5.0)   # 5/100*100
+        assert r0["hold_hours"] == pytest.approx(6.0)
+        # null base_capital -> net_pnl_pct None; null opened_at -> hold None
+        r1 = res["rows"][1]
+        assert r1["net_pnl_pct"] is None
+        assert r1["hold_hours"] is None

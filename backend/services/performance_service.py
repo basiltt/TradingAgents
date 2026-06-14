@@ -497,6 +497,46 @@ class PerformanceService:
             },
         }
 
+    async def compute_trades_page(self, *, scope: str, timeframe: str, anchor: datetime,
+                                  sort: str = "net_pnl", direction: str = "desc",
+                                  cursor: tuple | None = None, limit: int = 50) -> dict:
+        """Keyset-paginated raw trade rows for the Trades tab. Empty scope -> no rows."""
+        account_ids, account_type, account_id = await self._resolve_scope(scope)
+        if account_id is not None and not account_ids:
+            return {"rows": [], "cursor": None, "has_more": False}
+        if account_id is None and account_type is None and not account_ids:
+            return {"rows": [], "cursor": None, "has_more": False}
+        start, end = resolve_timeframe_window(timeframe, anchor)
+        rows, next_cursor, has_more = await self._db.get_performance_trades_page(
+            account_ids=account_ids or None, account_type=account_type,
+            start=start, end=end, sort=sort, direction=direction, cursor=cursor, limit=limit,
+        )
+        shaped = []
+        for r in rows:
+            bc = r.get("base_capital")
+            npl = r.get("net_pnl")
+            net_pnl_pct = (float(npl) / float(bc) * 100) if (npl is not None and bc) else None
+            hold = None
+            if r.get("opened_at") and r.get("closed_at"):
+                hold = (r["closed_at"] - r["opened_at"]).total_seconds() / 3600
+            shaped.append({
+                "id": r["id"], "symbol": r["symbol"], "side": r["side"],
+                "net_pnl": float(npl) if npl is not None else None,
+                "net_pnl_pct": net_pnl_pct,
+                "close_reason": r.get("close_reason"),
+                "opened_at": r["opened_at"].isoformat() if r.get("opened_at") else None,
+                "closed_at": r["closed_at"].isoformat() if r.get("closed_at") else None,
+                "hold_hours": hold,
+            })
+        return {"rows": shaped, "cursor": next_cursor, "has_more": has_more}
+
+    async def compute_breakdowns_for(self, *, scope: str, timeframe: str, anchor: datetime) -> dict:
+        """Resolve scope+window then compute bounded breakdown aggregates (Phase 3)."""
+        account_ids, account_type, account_id = await self._resolve_scope(scope)
+        start, end = resolve_timeframe_window(timeframe, anchor)
+        trades = await self._fetch_scoped(account_ids, account_id, account_type, start=start, end=end)
+        return compute_breakdowns(trades)
+
     async def _compute_prev(self, scope, timeframe, anchor, account_ids, account_id,
                             account_type, D, d_accounts) -> dict | None:
         """Prior equal-length window KPIs for hero delta chips. None for ALL.
