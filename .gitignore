@@ -242,4 +242,16 @@ node_modules/
 .mcp.json
 _tick_cache/
 
+# Local account backups — contain the Fernet ENCRYPTION_KEY and DECRYPTED trading
+# account dumps (api keys/secrets). NEVER commit. Keep on disk for restore only.
+backups/
+
+# One-off debug/forensics probe scripts + their logs/pycache — local investigation
+# scratch, never part of the project.
+debug_forensics/
+
+# Signal-research scratch: experiment logs, ensemble JSONs, search scripts — local
+# research artifacts, never committed.
+signal_research/
+
 
