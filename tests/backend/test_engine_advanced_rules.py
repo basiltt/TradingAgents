@@ -171,73 +171,88 @@ class TestTimeBasedRules:
         )
         signals = [_make_signal()]
         base_time = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
-        # Underwater through breakeven time (1h), then recovers above entry at 120min.
+        # Underwater through breakeven time (1h), then recovers at 120min. NOTE: BREAKEVEN_
+        # TIMEOUT marks the account on the ADVERSE side of the bar (a long uses the bar LOW,
+        # not the close — the engine's conservative live-parity mark so a brief favorable
+        # wick can't trigger a mass close live would not confirm). So the recovery candle's
+        # LOW must clear entry+buffer: entry 50000, qty 0.2, buffer ≈ 8.2 → need
+        # 0.2*(low-50000) >= 8.2 → low >= ~50041. Use low 50100 (uPnL +20 > buffer).
         klines = {"BTCUSDT": [
             {"open_time": base_time, "open": 50000.0, "high": 50000.0, "low": 49900.0, "close": 50000.0, "volume": 100.0},
             {"open_time": base_time + timedelta(minutes=30), "open": 50000.0, "high": 50000.0, "low": 49500.0, "close": 49600.0, "volume": 100.0},
             {"open_time": base_time + timedelta(minutes=90), "open": 49600.0, "high": 49900.0, "low": 49500.0, "close": 49800.0, "volume": 100.0},
-            {"open_time": base_time + timedelta(minutes=120), "open": 49800.0, "high": 50200.0, "low": 49800.0, "close": 50100.0, "volume": 100.0},
+            {"open_time": base_time + timedelta(minutes=120), "open": 50100.0, "high": 50200.0, "low": 50100.0, "close": 50150.0, "volume": 100.0},
         ]}
         result = engine.run(config, signals, klines)
         assert len(result.trades) == 1
         assert result.trades[0]["close_reason"] == "breakeven", result.trades[0]["close_reason"]
 
-    def test_breakeven_excludes_max_duration_queued_position_from_upnl_sum(self):
-        """A position queued by MAX_DURATION must be EXCLUDED from the account-level
-        breakeven uPnL sum (via the id() set), so its PnL can't pollute the recovery
-        check for the OTHER still-open positions.
+    def test_breakeven_excludes_mr_timestopped_position_from_upnl_sum(self):
+        """A position queued by the MR fast time-stop must be EXCLUDED from the account-
+        level breakeven uPnL sum (via the id() set at the breakeven block), so its PnL can't
+        pollute the recovery check for the OTHER still-open positions.
 
-        Two staggered positions:
-          - BTC enters at t=0, stays flat, then at t=120 (elapsed 2h = max_duration)
-            SPIKES to a big winner (uPnL ≈ +2000). MAX_DURATION queues it first.
-          - ETH enters at t=30, is past its breakeven window at t=120 but only mildly
-            underwater (uPnL ≈ −33), so on its OWN it can NEVER clear the fee buffer.
+        Direct unit test of `_evaluate_time_rules` (an end-to-end kline fixture cannot reach
+        this path: the MR time-stop is the ONLY rule that queues a position BEFORE the
+        breakeven sum is computed — MAX_DURATION runs AFTER breakeven, so it can never
+        pre-exclude anything; see the rule ordering in _evaluate_time_rules).
 
-        With the exclusion, the breakeven sum sees only ETH (−33 < buffer) → ETH does
-        NOT close 'breakeven' (it later force-closes 'backtest_end'). If someone drops
-        the id() exclusion, BTC's +2000 pollutes the sum (≫ buffer) and ETH wrongly
-        closes 'breakeven' — so this test fails, guarding the exclusion. BTC itself
-        still closes 'max_duration' (the literal MAX_DURATION-priority guarantee)."""
-        from backend.services.backtest_engine import BacktestEngine
+        Setup: one account, both positions past the 1h breakeven window.
+          - MR position (time_stop_minutes=60): a large winner (+200). At elapsed ≥ 60min it
+            is queued 'mr_time_stop' FIRST → its id() enters the exclusion set.
+          - Trend position: mildly underwater (−~32), alone below its own fee buffer.
+
+        With the exclusion the breakeven sum sees only the trend leg (< buffer) → it does NOT
+        close 'breakeven' (it survives this candle). If someone drops the id() exclusion, the
+        MR winner's +200 pollutes the sum (≫ buffer) and the trend leg wrongly closes
+        'breakeven' — so this test fails, guarding the exclusion. The MR leg itself always
+        closes 'mr_time_stop'."""
+        from backend.services.backtest_engine import BacktestEngine, Position, SimulationState
 
         engine = BacktestEngine()
         config = _make_config(
-            breakeven_timeout_hours=1.0,
-            take_profit_pct=500.0, stop_loss_pct=500.0,
-            max_trade_duration_hours=2.0, max_trades=5,
-            leverage=20, capital_pct=5.0, fee_rate_pct=0.055, slippage_bps=0,
+            breakeven_timeout_hours=1.0, max_trade_duration_hours=None,
+            leverage=20, fee_rate_pct=0.055, slippage_bps=0,
         )
         base_time = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
-        signals = [
-            _make_signal(ticker="BTCUSDT", id=1, scan_id="s1", signal_time=base_time,
-                         analysis_price=50000.0),
-            _make_signal(ticker="ETHUSDT", id=2, score=7, scan_id="s2",
-                         signal_time=base_time + timedelta(minutes=30), analysis_price=3000.0),
-        ]
-        # BTC: flat at 50000 for 2h (so breakeven never fires early), then a +20% spike
-        # at t=120 → elapsed 2h hits MAX_DURATION while it is a large winner.
-        btc = [
-            {"open_time": base_time + timedelta(minutes=5 * i),
-             "open": 50000.0, "high": 50050.0, "low": 49950.0, "close": 50000.0, "volume": 100.0}
-            for i in range(24)
-        ]
-        btc.append({"open_time": base_time + timedelta(minutes=120),
-                    "open": 50000.0, "high": 60000.0, "low": 50000.0, "close": 60000.0, "volume": 100.0})
-        # ETH: enters t=30, mildly underwater (2990) the whole time — alone its uPnL
-        # (≈ −33) can never clear its ~8.2 fee buffer, so breakeven must not fire for it.
-        eth = [
-            {"open_time": base_time + timedelta(minutes=30 + 5 * i),
-             "open": 3000.0, "high": 2998.0, "low": 2985.0, "close": 2990.0, "volume": 100.0}
-            for i in range(19)  # 30min .. 120min
-        ]
-        result = engine.run(config, signals, {"BTCUSDT": btc, "ETHUSDT": eth})
-        by_symbol = {t["symbol"]: t for t in result.trades}
-        assert set(by_symbol) == {"BTCUSDT", "ETHUSDT"}, by_symbol
-        # The maxed winner closes via MAX_DURATION (queued first, excluded from the sum).
-        assert by_symbol["BTCUSDT"]["close_reason"] == "max_duration", by_symbol["BTCUSDT"]["close_reason"]
-        # The discriminator: ETH must NOT ride BTC's excluded uPnL into a breakeven close.
-        assert by_symbol["ETHUSDT"]["close_reason"] != "breakeven", by_symbol["ETHUSDT"]["close_reason"]
-        assert by_symbol["ETHUSDT"]["close_reason"] == "backtest_end", by_symbol["ETHUSDT"]["close_reason"]
+        # MR winner: entered at t=0, qty 0.2 @ 50000; time-stop 60min (fires at the candle).
+        mr_pos = Position(
+            symbol="BTCUSDT", side="Buy", entry_price=50000.0, qty=0.2, leverage=20,
+            entry_time=base_time, tp_price=300000.0, sl_price=1.0, liq_price=1.0,
+            entry_fee=0.0, locked_margin=0.0, strategy_kind="mean_reversion",
+            time_stop_minutes=60.0, equity_ref_entry=50000.0,
+        )
+        # Trend leg: entered at t=0, qty 0.2 @ 3000; mildly underwater at the candle.
+        trend_pos = Position(
+            symbol="ETHUSDT", side="Buy", entry_price=3000.0, qty=0.2, leverage=20,
+            entry_time=base_time, tp_price=30000.0, sl_price=1.0, liq_price=1.0,
+            entry_fee=0.0, locked_margin=0.0, strategy_kind="trend",
+            equity_ref_entry=3000.0,
+        )
+        state = SimulationState(wallet_balance=10000.0)
+        state.open_positions = [mr_pos, trend_pos]
+        # breakeven rule armed at t=0 (account-level), so at the t=120 candle it is elapsed.
+        state.breakeven_rule_started_at = base_time
+        candle_time = base_time + timedelta(minutes=120)
+        # Marks: MR is a clear winner (+200 on the close mark); trend mildly underwater.
+        latest_prices = {"BTCUSDT": 51000.0, "ETHUSDT": 2990.0}
+        # adverse-side marks (long → low) used by the breakeven sum: keep MR a winner and the
+        # trend leg underwater so the trend leg alone can never clear its own buffer.
+        breakeven_prices = {"BTCUSDT": 51000.0, "ETHUSDT": 2990.0}
+
+        engine._evaluate_time_rules(
+            config, state, candle_time, 0.00055,
+            latest_prices=latest_prices, breakeven_prices=breakeven_prices,
+        )
+        by_symbol = {t["symbol"]: t for t in state.closed_trades}
+        # The MR leg closes via its fast time-stop (queued first → excluded from the sum).
+        assert by_symbol["BTCUSDT"]["close_reason"] == "mr_time_stop", by_symbol.get("BTCUSDT")
+        # The discriminator: the trend leg must NOT ride the excluded MR winner's uPnL into a
+        # 'breakeven' close. With the exclusion intact it stays open this candle.
+        assert "ETHUSDT" not in by_symbol, (
+            f"trend leg wrongly closed: {by_symbol.get('ETHUSDT')}"
+        )
+        assert any(p.symbol == "ETHUSDT" for p in state.open_positions), "trend leg must stay open"
 
     def test_breakeven_closes_all_via_account_netting(self):
         """ACCOUNT-LEVEL netting: a winner's uPnL carries an underwater sibling over the
@@ -276,16 +291,18 @@ class TestTimeBasedRules:
             _make_signal(ticker="ETHUSDT", id=2, score=7, scan_id="s2",
                          signal_time=base_time + timedelta(minutes=30), analysis_price=3000.0),
         ]
-        # BTC: flat at 50000 for 2h (combined uPnL stays below buffer so breakeven can't
-        # fire early), then a +2% step to 51000 at t=120 → clear WINNER (+200), nowhere
-        # near the 500% TP.
+        # BTC: flat at 50000 until t=120 (combined uPnL stays below buffer so breakeven can't
+        # fire early — its adverse-side low 49950 < entry), then a clean WINNER at t=120.
+        # NOTE: BREAKEVEN_TIMEOUT marks on the ADVERSE side (a long uses the bar LOW), so the
+        # winner candle's LOW (not close) must be the +winner: low 51000 → uPnL 0.2*(+1000)
+        # = +200, well clear of the 500% TP.
         btc = [
             {"open_time": base_time + timedelta(minutes=5 * i),
              "open": 50000.0, "high": 50050.0, "low": 49950.0, "close": 50000.0, "volume": 100.0}
             for i in range(24)  # 0min .. 115min
         ]
         btc.append({"open_time": base_time + timedelta(minutes=120),
-                    "open": 50000.0, "high": 51000.0, "low": 50000.0, "close": 51000.0, "volume": 100.0})
+                    "open": 51000.0, "high": 51500.0, "low": 51000.0, "close": 51200.0, "volume": 100.0})
         # ETH: enters t=30, mildly underwater (2990) the whole time. Alone its uPnL
         # (≈ -31.64) is NEGATIVE — it can never clear its own ~7.8 fee buffer, so a
         # per-position breakeven would never fire for it. Needs a candle at t=120 so its

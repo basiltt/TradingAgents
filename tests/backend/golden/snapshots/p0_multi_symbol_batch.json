@@ -3,7 +3,7 @@
     "len": 3,
     "money": [
       10000.0,
-      10033.468603,
+      10033.47305,
       10077.941103
     ]
   },
@@ -41,18 +41,18 @@
         "signal_confidence": "high",
         "signal_score": 8,
         "strategy_kind": "trend",
-        "symbol": "ETHUSDT"
+        "symbol": "BTCUSDT"
       },
       "money": {
-        "entry_price": 3000.0,
-        "exit_price": 3015.0,
-        "fees_paid": 11.026397,
+        "entry_price": 50000.0,
+        "exit_price": 50250.0,
+        "fees_paid": 11.0275,
         "funding_paid": null,
-        "mae_pct": 13.333333,
-        "mfe_pct": 70.0,
-        "pnl": 38.968603,
+        "mae_pct": 0.0,
+        "mfe_pct": 6.0,
+        "pnl": 38.9725,
         "pnl_pct": 3.89725,
-        "qty": 3.333
+        "qty": 0.2
       },
       "time": {
         "entry_time": 1767225600,
@@ -68,18 +68,18 @@
         "signal_confidence": "high",
         "signal_score": 8,
         "strategy_kind": "trend",
-        "symbol": "BTCUSDT"
+        "symbol": "ETHUSDT"
       },
       "money": {
-        "entry_price": 50000.0,
-        "exit_price": 50250.0,
-        "fees_paid": 11.0275,
+        "entry_price": 3000.0,
+        "exit_price": 3015.0,
+        "fees_paid": 11.026397,
         "funding_paid": null,
-        "mae_pct": 0.0,
-        "mfe_pct": 6.0,
-        "pnl": 38.9725,
+        "mae_pct": 13.333333,
+        "mfe_pct": 70.0,
+        "pnl": 38.968603,
         "pnl_pct": 3.89725,
-        "qty": 0.2
+        "qty": 3.333
       },
       "time": {
         "entry_time": 1767225600,

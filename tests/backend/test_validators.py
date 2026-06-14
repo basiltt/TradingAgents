@@ -33,9 +33,19 @@ def test_valid_http_url():
 
 def test_valid_https_url():
     from backend.validators import validate_backend_url
+    from unittest.mock import patch
+    import socket
 
-    result = validate_backend_url("https://api.openai.com/v1", server_port=8000)
-    assert result == "https://api.openai.com/v1"
+    # Mock DNS to a public IP (matches test_valid_http_url). Without this the test does a
+    # REAL getaddrinfo lookup of api.openai.com, which makes it network-dependent and flaky
+    # under sandboxed/offline runs (it intermittently failed "Cannot resolve hostname" only
+    # in the full suite, never in isolation).
+    with patch("backend.validators.socket.getaddrinfo") as mock_gai:
+        mock_gai.return_value = [
+            (socket.AF_INET, None, None, None, ("93.184.216.34", None))
+        ]
+        result = validate_backend_url("https://api.openai.com/v1", server_port=8000)
+        assert result == "https://api.openai.com/v1"
 
 
 def test_reject_ftp_scheme():

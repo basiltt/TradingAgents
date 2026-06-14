@@ -47,7 +47,7 @@
         "exit_price": 49000.0,
         "fees_paid": 10.89,
         "funding_paid": null,
-        "mae_pct": 20.0,
+        "mae_pct": 24.0,
         "mfe_pct": 0.0,
         "pnl": -210.89,
         "pnl_pct": -21.089,
@@ -55,7 +55,7 @@
       },
       "time": {
         "entry_time": 1767225600,
-        "exit_time": 1767228000
+        "exit_time": 1767228600
       }
     }
   ]

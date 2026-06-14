@@ -52,9 +52,12 @@ def test_migration_versions_contiguous_and_unique():
     assert 62 in by_ver and callable(by_ver[62])
     assert 63 in by_ver and callable(by_ver[63])
     # v64 — mcp_sweep_jobs.error_message (sweep failure diagnostics, string ALTER).
-    # v64 is the current head of the migration list.
     assert 64 in by_ver and isinstance(by_ver[64], str)
-    assert max(versions) == 64
+    # v65 — idx_scan_results_completed_at (regime-context injection; string DDL).
+    # v66 — idx_trades_closed_at (Performance tab; string DDL). v66 is the current head.
+    assert 65 in by_ver and isinstance(by_ver[65], str)
+    assert 66 in by_ver and isinstance(by_ver[66], str)
+    assert max(versions) == 66
 
 
 async def _apply_all(conn):

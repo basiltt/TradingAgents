@@ -96,6 +96,13 @@ def test_allow_list_fail_on_new_autotradeconfig_field():
         "mean_reversion_enabled", "mr_short_enabled", "mr_long_enabled",
         "mr_long_ack_requested",          # explicit human-ack gate — never auto-swept
         "strategy_cohort",                # routing identity (which strategy runs)
+        # ── FIX-005 signal-quality gates (added with the deterministic signal filter).
+        # DENIED from sweeping: these are boolean behavioral toggles (trade-WITH-trend,
+        # veto-falling-knife-shorts), backtest-PROVEN as fixed improvements — not numeric
+        # strategy parameters the optimizer has a model of. They are not referenced in
+        # backend/mcp/ at all (not sweep inputs), and stay fail-closed like every other
+        # enable-toggle until a human deliberately promotes them.
+        "require_trend_alignment", "block_falling_knife",
         "mr_regime", "mr_mean_interval", "mr_mean_period",
         "mr_capital_pct", "mr_leverage", "mr_max_trades",
         "mr_target_capture_pct", "mr_tight_stop_pct", "mr_time_stop_minutes",
