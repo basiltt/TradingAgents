@@ -273,7 +273,7 @@ Create `tests/backend/test_performance_service.py`:
 """Unit tests for PerformanceService pure computation (spec §3/§4.1)."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
