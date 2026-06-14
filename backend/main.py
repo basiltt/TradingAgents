@@ -256,23 +256,33 @@ def create_app() -> FastAPI:
         app.state.db = db
 
         # ── Post-scan optimization: rate-gate hardening (Phase 0) ──────────────
-        # Apply the per-account/endpoint caps from the registry to the gate, and
-        # start a periodic refresh of the revert kill-switches (channel-fix /
-        # per-endpoint-limiter / fan-out-disabled) so an operator can revert at
-        # runtime without a redeploy. Fail-open: never abort startup.
+        # validate_registry() guards against a private endpoint with no per-second
+        # cap (a per-UID ban risk). It runs OUTSIDE the fail-open block below so a
+        # real misconfiguration fails loudly at startup, as designed.
+        from backend.services.bybit_endpoints import (
+            ENDPOINT_PER_SECOND_CAP,
+            validate_registry,
+        )
+        validate_registry()
+        # Apply caps + start the revert-kill-switch refresher. This part is
+        # fail-open (a transient failure must not abort trading startup); the
+        # refresher ALWAYS starts so runtime revert stays available even if the
+        # one-time cap-apply hiccups.
+        _POST_SCAN_FLAGS_REFRESH_SECONDS = 15
         try:
             from backend.services.bybit_rate_gate import get_rate_gate
-            from backend.services.bybit_endpoints import ENDPOINT_PER_SECOND_CAP, validate_registry
-            from backend.services import post_scan_flags
-            validate_registry()  # fail loudly if a private endpoint class lacks a cap
             _caps = {k: v for k, v in ENDPOINT_PER_SECOND_CAP.items() if v is not None}
             get_rate_gate().set_endpoint_caps(_caps, per_window=1.0)
+        except Exception:
+            logger.warning("post_scan_rate_gate_caps_init_failed", exc_info=True)
+        try:
+            from backend.services import post_scan_flags
             await post_scan_flags.refresh_from_db(db)  # prime the snapshot once
 
             async def _refresh_post_scan_flags() -> None:
                 while True:
                     try:
-                        await asyncio.sleep(15)
+                        await asyncio.sleep(_POST_SCAN_FLAGS_REFRESH_SECONDS)
                         await post_scan_flags.refresh_from_db(db)
                     except asyncio.CancelledError:
                         break
@@ -281,11 +291,13 @@ def create_app() -> FastAPI:
 
             app.state._post_scan_flags_task = asyncio.create_task(_refresh_post_scan_flags())
         except Exception:
-            logger.warning("post_scan_rate_gate_init_failed", exc_info=True)
+            logger.warning("post_scan_flags_refresher_init_failed", exc_info=True)
 
-        # and the scanner (`if self._debug_recorder is not None`) are both designed to
-        # tolerate a missing recorder, so a failure here must NEVER abort trading
-        # startup — degrade to None and continue, mirroring backtest_service recovery.
+        # Debug tracing is an OPTIONAL forensics feature. Its router (503 when
+        # absent) and the scanner (`if self._debug_recorder is not None`) are both
+        # designed to tolerate a missing recorder, so a failure here must NEVER abort
+        # trading startup — degrade to None and continue, mirroring backtest_service
+        # recovery.
         debug_recorder = None
         try:
             from backend.services.debug_trace_recorder import DebugTraceRecorder

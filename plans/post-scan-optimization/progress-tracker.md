@@ -36,16 +36,20 @@
 | 18 | 05:40 | Checkpoint with user | DONE | User: proceed as planned, all 4 phases now. |
 | 19 | 05:45 | Phase 0 impl (TASK-0.1..0.7) | DONE | TDD. New: bybit_endpoints.py (registry), post_scan_flags.py (revert switches), rate_gate per-account/endpoint sub-limiter + ban-breaker + RateGateBanAbort + thread-safe wait_count, bybit_client channel routing + _do_sync_time gated + 10006 breaker, accounts_service passes account_id, features.py +3 switches, main.py wiring + flags refresher. 118 Phase-0 tests green, 114 accounts/scanner green, 0 regressions. |
 | 20 | 06:10 | Phase 0 review R1 (adversarial) | DONE | 2 agents. Found CRITICAL P0-F1: per-UID 10006 (recoverable throttle) tripped a process-wide 10-min ban → global outage. Plus P0-F2 herd recovery, F4 uncapped class, F7 first-victim exception, F10 sync un-gated, DB-blip flag coupling. ALL FIXED: ban only on IP-ban signal (10018/ip-banned msg), half-open single-probe recovery, registry validation, RateGateBanAbort on trip, _do_sync_time always gated, revert flags read own key (not __all__). 153 tests green, 0 regressions. |
-| 21 | 06:35 | Phase 0 commit | IN_PROGRESS | — |
+| 21 | 06:35 | Phase 0 commit | DONE | 927ee08 — feat(rate-limit): Phase 0 Bybit rate-gate correctness + ban breaker. 153 tests green. |
+| 22 | 07:00 | Phase 0 review R2 (5 agents) | DONE | CRITICAL: half-open was dead code (herd); RateGateBanAbort(BaseException) escaped `except Exception` in 5 supervisor-less loops → loops DIE on ban. FIXED via redesign: background lanes WAIT OUT bans (raise_on_ban=False default), only lane=order raises; proper single-probe half-open + clear_ban-on-success; validate_registry out of fail-open; scanner+manual catch ban. +tests. 258 green. |
+| 23 | 07:30 | Phase 0 review R3 (5 agents) | IN_PROGRESS | verify R2 redesign |
 
 ## Implementation Progress
 
 | Phase | Status | Commit | Notes |
 |-------|--------|--------|-------|
-| Phase 0 (rate-gate) | IMPL DONE, review pending | — | 118 new tests green; deferred admin-endpoint hardening + startup-validation refinement to Phase 3 |
-| Phase 1 (WS) | PENDING | — | — |
+| Phase 0 (rate-gate) | ✅ DONE (impl+review+commit) | 927ee08 | 153 tests green; adversarial review found+fixed the per-UID-10006→global-ban outage |
+| Phase 1 (WS) | PENDING | — | next |
 | Phase 2 (parallelism) | PENDING | — | — |
 | Phase 3 (UX) | PENDING | — | — |
+
+**Deferred to Phase 3 (tracked):** admin-endpoint trust-boundary hardening (TASK-3.3), per-tail feasibility auto-reduce refinement, P0-F5 deque eviction (low), P0-F8 sync-lane reservation (low), P0-F11 WS-accounting confirmation (low).
 
 ---
 

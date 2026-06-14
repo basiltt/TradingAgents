@@ -115,11 +115,13 @@ async def test_bybit_client_uses_gate(monkeypatch):
         mock_gate.acquire_async.assert_called_once_with(
             channel="private", lane="order",
             account_key="acct-x", endpoint_class="order_create",
+            raise_on_ban=True,
         )
         mock_gate.acquire_async.reset_mock()
-        # A public market read routes to the public channel.
+        # A public market read routes to the public channel (background, no raise).
         await client._wait_for_rate_limit("/v5/market/tickers", lane="live")
         mock_gate.acquire_async.assert_called_once_with(
             channel="public", lane="live",
             account_key="acct-x", endpoint_class="market",
+            raise_on_ban=False,
         )

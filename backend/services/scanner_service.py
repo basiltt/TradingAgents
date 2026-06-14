@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from backend.services.analysis_service import DEFAULT_MAX_CONCURRENT, ConcurrencyLimitError
 from backend.services.auto_trade_service import AutoTradeExecutor
+from backend.services.bybit_rate_gate import RateGateBanAbort
 
 logger = logging.getLogger(__name__)
 
@@ -1311,12 +1312,16 @@ class ScannerService:
                 try:
                     batch_executions = await executor.execute_batch(all_results)
                     await self._append_auto_trade_results(scan_id, batch_executions)
+                except RateGateBanAbort:
+                    logger.warning("auto_trade_batch_rate_ban", extra={"scan_id": scan_id})
                 except Exception as e:
                     logger.warning("auto_trade_batch_error", extra={"scan_id": scan_id, "error": str(e)[:200]})
                 # Fill remaining slots for immediate-mode configs with fill_to_max_trades
                 try:
                     fill_executions = await executor.fill_immediate_remaining(all_results)
                     await self._append_auto_trade_results(scan_id, fill_executions)
+                except RateGateBanAbort:
+                    logger.warning("auto_trade_fill_rate_ban", extra={"scan_id": scan_id})
                 except Exception as e:
                     logger.warning("auto_trade_fill_error", extra={"scan_id": scan_id, "error": str(e)[:200]})
                 # Post-scan re-check: handle accounts where conditions changed during the scan
@@ -1324,6 +1329,8 @@ class ScannerService:
                 try:
                     recheck_executions = await executor.post_scan_recheck(all_results)
                     await self._append_auto_trade_results(scan_id, recheck_executions)
+                except RateGateBanAbort:
+                    logger.warning("auto_trade_recheck_rate_ban", extra={"scan_id": scan_id})
                 except Exception as e:
                     logger.warning("auto_trade_post_scan_recheck_error", extra={"scan_id": scan_id, "error": str(e)[:200]})
 

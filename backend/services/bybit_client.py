@@ -84,7 +84,10 @@ class BybitClient:
             # public when active, private under revert (FR-002).
             from backend.services import post_scan_flags as _flags
             _channel = "public" if _flags.channel_fix_active() else "private"
-            await get_rate_gate().acquire_async(channel=_channel, lane="order")
+            # Background priority: time-sync waits out a ban (does not raise) — a
+            # stale clock is preferable to crashing the sync path. lane="order"
+            # keeps it ahead of other background traffic for promptness.
+            await get_rate_gate().acquire_async(channel=_channel, lane="order", raise_on_ban=False)
             session = await self._get_session()
             local_before = int(time.time() * 1000)
             async with session.get(f"{self._base_url}/v5/market/time", timeout=aiohttp.ClientTimeout(total=5)) as resp:
@@ -145,6 +148,12 @@ class BybitClient:
         *, retry_on_network_error: bool = True, lane: str = "live",
     ) -> dict[str, Any]:
         await self._ensure_time_synced()
+        # Capture the ban generation BEFORE the request so a successful response can
+        # only clear the ban it was issued under (not a fresher one — ABA guard).
+        try:
+            _ban_gen_at_start = get_rate_gate().ban_generation
+        except Exception:
+            _ban_gen_at_start = None
 
         for attempt in range(_MAX_RETRIES):
             async with self._semaphore:
@@ -222,10 +231,12 @@ class BybitClient:
                     # 10006 is most often a per-endpoint/per-UID cap. Only an
                     # IP-ban signal trips the process-wide breaker (FR-047); a per-UID
                     # 10006 surfaces as a normal BybitAPIError and is handled per-account.
+                    # "banned" alone is NOT used (a per-symbol "banned from trading"
+                    # must not trigger a global egress halt); require an explicit IP
+                    # signal: retCode 10018 or an "ip ... ban" message.
                     is_ip_ban = (
                         is_ip_ban_code
                         or ("ip" in ret_msg and "ban" in ret_msg)
-                        or "banned" in ret_msg
                     )
                     if is_ip_ban:
                         logger.error(
@@ -237,20 +248,40 @@ class BybitClient:
                             cooloff = max(reset, _BAN_COOLOFF_SECONDS)
                             gate = get_rate_gate()
                             gate.trip_ban(cooloff_seconds=cooloff)
-                            # The tripping request takes the same ban-aware path as
-                            # every subsequent caller, so the order layer can record a
-                            # ban substatus / release locks uniformly (FR-047).
-                            raise RateGateBanAbort(cooloff_until=gate.ban_cooloff_until)
-                        except RateGateBanAbort:
-                            raise
                         except Exception:
-                            pass
+                            # Failing to TRIP the breaker is a money-safety event —
+                            # make it observable rather than swallowing it silently.
+                            logger.exception(
+                                "bybit_ban_trip_failed",
+                                extra={"path": path, "ret_code": ret_code},
+                            )
+                        # Lane-gated propagation: the order/scan path gets the fast
+                        # RateGateBanAbort so it can release locks + record a ban
+                        # substatus (FR-047). BACKGROUND lanes (reconciler / AI-mgr /
+                        # market-data / evaluator loops) get a NORMAL BybitAPIError so
+                        # their `except Exception` catches it and the loop survives to
+                        # wait out the ban on its next tick — a BaseException would
+                        # crash those supervisor-less loops at the worst time.
+                        if lane == "order":
+                            raise RateGateBanAbort(cooloff_until=get_rate_gate().ban_cooloff_until)
+                        raise BybitAPIError(ret_code, str(data.get("retMsg", "IP banned")))
 
                 if ret_code != 0:
                     ret_msg_raw = data.get("retMsg", "Unknown error")
                     logger.warning(f"Bybit API error on {path}: {ret_code} - {ret_msg_raw}")
                     raise BybitAPIError(ret_code, ret_msg_raw)
 
+                # A clean response confirms the IP is reachable again — if a
+                # half-open ban probe was in flight, close the breaker so normal
+                # traffic resumes (the probe "succeeded"). Guard with the ban
+                # generation observed at the START of this request so a slow success
+                # cannot wipe a FRESH ban tripped while it was in flight (ABA).
+                try:
+                    gate = get_rate_gate()
+                    if gate.ban_cooloff_until is not None:
+                        gate.clear_ban(expected_generation=_ban_gen_at_start)
+                except Exception:
+                    pass
                 return data.get("result", {})
 
         raise BybitAPIError(10006, "Rate limit exceeded after retries")
@@ -293,12 +324,19 @@ class BybitClient:
         per-account/endpoint sub-limit in the same acquire. Falls back to the
         legacy all-private behavior when the channel-fix revert switch is on
         (FR-001/009). Order placement / leverage use the 'order' lane.
+
+        Ban handling: only the 'order' lane (real-money placement / leverage /
+        protective close) gets the fast RateGateBanAbort so it can release locks
+        and record a ban substatus. All background lanes (live/mcp — reconciler,
+        AI manager, market data, WS) WAIT OUT the ban instead, so an IP ban
+        gracefully pauses those loops rather than crashing them.
         """
         from backend.services import post_scan_flags as _flags
         gate = get_rate_gate()
+        raise_on_ban = (lane == "order")
         if not _flags.channel_fix_active():
             # Revert: legacy behavior — everything on the private channel, no sub-limiter.
-            await gate.acquire_async(channel="private", lane=lane)
+            await gate.acquire_async(channel="private", lane=lane, raise_on_ban=raise_on_ban)
             return
         try:
             channel, endpoint_class = classify_endpoint(path) if path else ("private", "order_query")
@@ -310,6 +348,7 @@ class BybitClient:
         ep_class = endpoint_class if _flags.per_endpoint_limiter_active() else None
         await gate.acquire_async(
             channel=channel, lane=lane, account_key=account_key, endpoint_class=ep_class,
+            raise_on_ban=raise_on_ban,
         )
 
     async def test_connection(self) -> dict[str, Any]:

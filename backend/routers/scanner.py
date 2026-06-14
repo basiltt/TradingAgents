@@ -11,6 +11,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from backend.schemas import PROVIDER_API_KEY_MAP, FilterPreviewResponse, ScanRequest, ScanResultItem
+from backend.services.bybit_rate_gate import RateGateBanAbort
 from backend.services.scanner_service import ScannerBusyError
 
 logger = logging.getLogger(__name__)
@@ -258,6 +259,8 @@ async def trigger_auto_trade(request: Request, scan_id: str):
                 batch_execs = await executor.execute_batch(results)
                 if batch_execs:
                     all_executions.extend(batch_execs)
+            except RateGateBanAbort:
+                logger.warning("auto_trade_manual_batch_rate_ban", extra={"scan_id": scan_id})
             except Exception as e:
                 logger.warning("auto_trade_manual_batch_error", extra={"scan_id": scan_id, "error": str(e)[:200]})
 
@@ -266,6 +269,8 @@ async def trigger_auto_trade(request: Request, scan_id: str):
                 fill_execs = await executor.fill_immediate_remaining(results)
                 if fill_execs:
                     all_executions.extend(fill_execs)
+            except RateGateBanAbort:
+                logger.warning("auto_trade_manual_fill_rate_ban", extra={"scan_id": scan_id})
             except Exception as e:
                 logger.warning("auto_trade_manual_fill_error", extra={"scan_id": scan_id, "error": str(e)[:200]})
 
@@ -274,6 +279,8 @@ async def trigger_auto_trade(request: Request, scan_id: str):
                 recheck_execs = await executor.post_scan_recheck(results)
                 if recheck_execs:
                     all_executions.extend(recheck_execs)
+            except RateGateBanAbort:
+                logger.warning("auto_trade_manual_recheck_rate_ban", extra={"scan_id": scan_id})
             except Exception as e:
                 logger.warning("auto_trade_manual_recheck_error", extra={"scan_id": scan_id, "error": str(e)[:200]})
 

@@ -65,3 +65,18 @@ class TestEndpointClassification:
             if channel == PRIVATE:
                 assert ep_class in ENDPOINT_PER_SECOND_CAP, f"{ep_class} missing a cap"
 
+    def test_validate_registry_raises_when_private_class_uncapped(self):
+        """validate_registry must FAIL when a private class has no per-second cap
+        (a silently un-sub-limited private endpoint is a per-UID ban risk)."""
+        import backend.services.bybit_endpoints as ep
+        from backend.services.bybit_endpoints import validate_registry, EndpointClassificationError, PRIVATE
+        original = dict(ep._REGISTRY)
+        try:
+            ep._REGISTRY["/v5/test/uncapped"] = (PRIVATE, "uncapped_class_xyz")
+            with pytest.raises(EndpointClassificationError):
+                validate_registry()
+        finally:
+            ep._REGISTRY.clear()
+            ep._REGISTRY.update(original)
+
+

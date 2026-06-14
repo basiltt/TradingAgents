@@ -183,7 +183,50 @@ async def test_ip_ban_signal_trips_breaker_with_ban_abort(client):
 
     try:
         with patch("asyncio.sleep", new_callable=AsyncMock), pytest.raises(RateGateBanAbort):
-            await client._request("POST", "/v5/order/create", {"x": 1})
+            await client._request("POST", "/v5/order/create", {"x": 1}, lane="order")
+        assert get_rate_gate().ban_cooloff_until is not None
+    finally:
+        get_rate_gate().clear_ban()
+
+
+@pytest.mark.asyncio
+async def test_ip_ban_background_lane_raises_catchable_bybit_error(client):
+    """CRITICAL: on a BACKGROUND lane an IP ban must surface as a NORMAL BybitAPIError
+    (catchable by `except Exception`) — NOT a BaseException that would crash a
+    supervisor-less reconciler/evaluator loop. The breaker is still tripped."""
+    from backend.services.bybit_rate_gate import get_rate_gate, RateGateBanAbort
+    get_rate_gate().clear_ban()
+    client._time_synced = True
+
+    ban_resp = _make_mock_resp({"retCode": 10018, "retMsg": "ip banned"})
+    ban_ctx = _make_mock_ctx(ban_resp)
+    client._session = _make_mock_session(request_return_value=ban_ctx)
+
+    try:
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            with pytest.raises(BybitAPIError) as exc:
+                await client._request("GET", "/v5/position/list", {}, lane="live")
+            assert not isinstance(exc.value, RateGateBanAbort)
+        assert get_rate_gate().ban_cooloff_until is not None
+    finally:
+        get_rate_gate().clear_ban()
+
+
+@pytest.mark.asyncio
+async def test_ip_ban_via_message_only_trips_breaker(client):
+    """An IP ban signalled by MESSAGE (retCode 10006 + 'ip ... banned', not 10018)
+    must still trip the breaker on the order lane."""
+    from backend.services.bybit_rate_gate import get_rate_gate, RateGateBanAbort
+    get_rate_gate().clear_ban()
+    client._time_synced = True
+
+    ban_resp = _make_mock_resp({"retCode": 10006, "retMsg": "Your ip is banned for 10 minutes"})
+    ban_ctx = _make_mock_ctx(ban_resp)
+    client._session = _make_mock_session(request_return_value=ban_ctx)
+
+    try:
+        with patch("asyncio.sleep", new_callable=AsyncMock), pytest.raises(RateGateBanAbort):
+            await client._request("POST", "/v5/order/create", {"x": 1}, lane="order")
         assert get_rate_gate().ban_cooloff_until is not None
     finally:
         get_rate_gate().clear_ban()

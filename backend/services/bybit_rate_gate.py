@@ -75,10 +75,27 @@ class BybitRateGate:
         # not banned). cooloff_until is the wall-clock epoch surfaced to the UI.
         self._ban_until_monotonic: Optional[float] = None
         self._ban_cooloff_until: Optional[float] = None
-        # Half-open recovery: after the cooloff deadline, admit ONE probe at a time
-        # rather than releasing the whole backlog at once (prevents a thundering
-        # herd that would instantly re-trip a still-active Bybit ban).
-        self._half_open_probe_in_flight: bool = False
+        # Monotonic generation counter bumped on every trip_ban. A success that
+        # clears the breaker must pass the generation it observed when it started,
+        # so a slow request whose ban was superseded by a FRESH ban cannot wipe the
+        # new ban (ABA guard).
+        self._ban_generation: int = 0
+        # Half-open recovery: after the cooloff deadline, admit exactly ONE probe
+        # and hold everyone else, rather than releasing the whole backlog at once
+        # (which would instantly re-trip a still-active Bybit ban). The probe is
+        # given a short window; if the prober never reports back (success ->
+        # clear_ban, failure -> trip_ban re-arms) the window expires and the next
+        # caller becomes the new probe (so a lost probe can't deadlock the gate).
+        self._half_open_probe_until: Optional[float] = None
+
+    # Probe window: how long a single half-open probe holds the "armed" state
+    # before another caller is allowed to re-probe (seconds). Must be >= the max
+    # request wall-time (aiohttp total=10s × retries) so a slow probe's window
+    # cannot expire while its request is still in flight (which would admit a
+    # second overlapping probe).
+    _HALF_OPEN_PROBE_WINDOW = 30.0
+    # How long a background (non-raise_on_ban) caller sleeps between ban re-checks.
+    _BAN_POLL_INTERVAL = 0.5
 
     def set_endpoint_caps(self, caps: dict[str, int], *, per_window: float = 1.0) -> None:
         """Override the per-account/endpoint caps and window (used by tests/config)."""
@@ -87,60 +104,79 @@ class BybitRateGate:
             self._endpoint_window = per_window
             self._endpoint_ts.clear()
 
+    @property
+    def ban_generation(self) -> int:
+        """Monotonic counter of ban trips; capture it before a probe request and
+        pass it to clear_ban() so a stale success can't wipe a fresher ban."""
+        return self._ban_generation
+
     def trip_ban(self, *, cooloff_seconds: float) -> None:
         """Open the ban breaker for ``cooloff_seconds`` (called on a confirmed
         IP-level ban — NOT a per-UID throttle).
 
-        While open, every acquire raises RateGateBanAbort so callers release locks
-        and stop hammering an already-banned IP.
+        While open, an acquire either raises RateGateBanAbort (order/scan callers
+        that pass raise_on_ban=True) or waits out the ban (background callers), so
+        nothing keeps hammering an already-banned IP.
         """
         with self._lock:
             self._ban_until_monotonic = time.monotonic() + cooloff_seconds
             self._ban_cooloff_until = time.time() + cooloff_seconds
-            self._half_open_probe_in_flight = False
+            self._half_open_probe_until = None
+            self._ban_generation += 1
 
-    def _check_ban(self) -> None:
-        """Raise RateGateBanAbort if the breaker is OPEN.
+    @property
+    def is_banned(self) -> bool:
+        """True while the ban breaker is OPEN (before the cooloff deadline)."""
+        deadline = self._ban_until_monotonic
+        return deadline is not None and time.monotonic() < deadline
 
-        Recovery is HALF-OPEN: once the cooloff deadline passes, exactly ONE caller
-        is admitted as a probe (the breaker stays "armed" for everyone else). If the
-        probe succeeds the breaker fully clears on its next acquire; if it fails with
-        a fresh ban, trip_ban re-arms. This bounds the post-ban burst to a single
-        request instead of the whole backlog.
+    def _ban_state(self) -> str:
+        """Classify the current ban state for an acquiring caller. Returns:
+        - "clear": no ban (or this caller is admitted as the half-open probe).
+        - "banned": breaker open OR a probe is already in flight — caller must
+          wait/abort.
+        Admission of a single probe happens HERE under the lock so it is atomic.
         """
         deadline = self._ban_until_monotonic
         if deadline is None:
-            return
+            return "clear"
         now = time.monotonic()
-        if now < deadline:
-            raise RateGateBanAbort(cooloff_until=self._ban_cooloff_until)
-        # Past the deadline — half-open. Admit a single probe under the lock.
         with self._lock:
-            if self._ban_until_monotonic is None:
-                return  # cleared by another caller
-            if now < self._ban_until_monotonic:
-                # re-armed by a concurrent trip
-                raise RateGateBanAbort(cooloff_until=self._ban_cooloff_until)
-            if not self._half_open_probe_in_flight:
-                # this caller is the probe — fully clear (a subsequent fresh ban
-                # will re-trip); admit it.
-                self._ban_until_monotonic = None
-                self._ban_cooloff_until = None
-                self._half_open_probe_in_flight = False
-                return
-            # a probe is already in flight — hold everyone else back
-            raise RateGateBanAbort(cooloff_until=self._ban_cooloff_until)
+            deadline = self._ban_until_monotonic
+            if deadline is None:
+                return "clear"
+            if now < deadline:
+                return "banned"
+            # Past the cooloff deadline — half-open.
+            probe_until = self._half_open_probe_until
+            if probe_until is not None and now < probe_until:
+                return "banned"  # a probe is in flight; hold others
+            # Admit THIS caller as the probe; arm the probe window. The breaker
+            # stays "set" (deadline non-None) so concurrent callers are held until
+            # the prober reports (clear_ban on success / trip_ban on fresh ban) or
+            # the window expires.
+            self._half_open_probe_until = now + self._HALF_OPEN_PROBE_WINDOW
+            return "clear"
 
     @property
     def ban_cooloff_until(self) -> Optional[float]:
         """Wall-clock epoch the current ban clears at, or None."""
         return self._ban_cooloff_until
 
-    def clear_ban(self) -> None:
-        """Clear any active ban (test isolation / manual operator override)."""
+    def clear_ban(self, expected_generation: Optional[int] = None) -> bool:
+        """Clear an active ban (called by a successful half-open probe, by an
+        operator override, or for test isolation). Returns True if it cleared.
+
+        If ``expected_generation`` is given, only clears when it matches the
+        current ban generation — so a slow probe whose ban was superseded by a
+        FRESH ``trip_ban`` cannot wipe the new ban (ABA guard)."""
         with self._lock:
+            if expected_generation is not None and expected_generation != self._ban_generation:
+                return False
             self._ban_until_monotonic = None
             self._ban_cooloff_until = None
+            self._half_open_probe_until = None
+            return True
 
     @property
     def current_usage(self) -> dict:
@@ -172,8 +208,18 @@ class BybitRateGate:
         lane: str = "live",
         account_key: Optional[str] = None,
         endpoint_class: Optional[str] = None,
+        raise_on_ban: bool = False,
     ) -> None:
         """Acquire a rate-gate slot.
+
+        Ban handling: if a process-wide IP ban is in effect, callers with
+        ``raise_on_ban=True`` (the order/scan placement path) get a fast
+        RateGateBanAbort so they can release locks and record a ban substatus.
+        Background callers (default ``raise_on_ban=False`` — reconciler, AI
+        manager, WS feeds, market data) instead WAIT OUT the ban (polling the
+        breaker), so an IP ban gracefully PAUSES those loops rather than crashing
+        them with a BaseException. The half-open probe admits exactly one of the
+        waiters when the cooloff elapses.
 
         `lane` selects priority on the private channel:
         - 'order' — order placement / leverage. Highest priority: uses the FULL
@@ -206,7 +252,15 @@ class BybitRateGate:
             self._wait_count += 1
         try:
             while True:
-                self._check_ban()
+                if self._ban_state() == "banned":
+                    if raise_on_ban:
+                        raise RateGateBanAbort(cooloff_until=self._ban_cooloff_until)
+                    # Background caller: pause until the ban clears (or a probe slot
+                    # opens) rather than crashing the loop. Bounded poll so a never-
+                    # clearing ban can't hang forever silently — the caller's own
+                    # loop will re-enter on the next tick.
+                    await asyncio.sleep(min(1.0, self._BAN_POLL_INTERVAL))
+                    continue
                 with self._lock:
                     now = time.monotonic()
                     while timestamps and timestamps[0] < now - window:
@@ -253,6 +307,11 @@ class BybitRateGate:
 
         Sync callers do not pass the per-account dimension (only async order/scan
         traffic does); this remains channel-only for backward compatibility.
+
+        Ban handling: sync callers keep their bool contract — while the breaker is
+        OPEN this returns ``False`` (treat as "couldn't acquire / skip") rather than
+        raising, so the threaded data-fetch path degrades gracefully instead of
+        throwing a BaseException out of a sync stack.
         """
         timestamps, max_budget, window = self._get_channel(channel)
         deadline = time.monotonic() + timeout
@@ -260,7 +319,9 @@ class BybitRateGate:
             self._wait_count += 1
         try:
             while time.monotonic() < deadline:
-                self._check_ban()
+                if self._ban_state() == "banned":
+                    time.sleep(min(0.5, self._BAN_POLL_INTERVAL))
+                    continue
                 with self._lock:
                     now = time.monotonic()
                     while timestamps and timestamps[0] < now - window:
