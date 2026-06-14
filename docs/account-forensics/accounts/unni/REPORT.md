@@ -323,5 +323,5 @@ ESPORTS loss plus the small net of the other six trades. The trade ledger's −$
 *under-counted* figure caused by finding #3.
 
 ---
-*Forensic scripts: `debug_forensics/s1`–`s5` (read-only prod queries) + `s4b/s4c` (MiniMax
+*Forensic scripts: `runs/2026-06-14/` (s1–s5 read-only prod queries + s4b/s4c MiniMax
 production-parity replay). No production data or code was modified.*
